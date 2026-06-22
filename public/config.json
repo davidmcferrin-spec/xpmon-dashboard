@@ -1,0 +1,96 @@
+{
+  "hosts": [
+    {
+      "id": "9212898b-fa99-438d-b38a-883b79860a23",
+      "display_name": "ININD-NN-XPRX",
+      "ip": "10.68.182.94",
+      "port": 9875,
+      "group": "Indy DR Hub",
+      "critical_apps": [
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
+      ]
+    },
+    {
+      "id": "d10c69e5-c94e-43ff-8c2d-c25adc8b77ab",
+      "display_name": "ININD-NN-XPRY",
+      "ip": "10.68.182.95",
+      "port": 9875,
+      "group": "Indy DR Hub",
+      "critical_apps": [
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
+      ]
+    },
+    {
+      "id": "e7014603-7575-44f9-bda0-7f18bbecb33e",
+      "display_name": "ILCHI-NN-XPRX",
+      "ip": "10.70.183.140",
+      "port": 9875,
+      "group": "Chicago Hub",
+      "critical_apps": [
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
+      ]
+    },
+    {
+      "id": "5236ee4f-2aa0-4cd2-9562-bc0b06b978a7",
+      "display_name": "ILCHI-NN-XPRX",
+      "ip": "10.70.183.141",
+      "port": 9875,
+      "group": "Chicago Hub",
+      "critical_apps": [
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
+      ]
+    },
+    {
+      "id": "4ad97c43-95ab-4af1-a4c6-66c45e374309",
+      "display_name": "ILCHIOF1RSDLQ1",
+      "ip": "10.70.4.55",
+      "port": 9875,
+      "group": "Data-DataLinq Servers",
+      "critical_apps": [
+        "{E73545DD-A41F-45D6-82D8-C2C8BE99957D}"
+      ]
+    },
+    {
+      "id": "767d7355-cd74-4bcd-b234-315db6ffb3e2",
+      "display_name": "NYNYCOF1RSDLQ1",
+      "ip": "10.207.6.61",
+      "port": 9875,
+      "group": "Data-DataLinq Servers",
+      "critical_apps": [
+        "{E73545DD-A41F-45D6-82D8-C2C8BE99957D}"
+      ]
+    },
+    {
+      "id": "937c6e3e-02a9-4641-9be3-22e434d94235",
+      "display_name": "NN Project Server Primary",
+      "ip": "10.70.4.84",
+      "port": 9875,
+      "group": "Project Servers",
+      "critical_apps": []
+    },
+    {
+      "id": "2cc7424b-64b9-4995-a689-c726b00448a6",
+      "display_name": "NN MOS Gateway Secondary",
+      "ip": "10.70.4.83",
+      "port": 9875,
+      "group": "Project Servers",
+      "critical_apps": []
+    },
+    {
+      "id": "c19091a8-82a3-40f0-8237-0769bec8f903",
+      "display_name": "NN ClipStore/INcoder",
+      "ip": "10.70.4.86",
+      "port": 9875,
+      "group": "Other",
+      "critical_apps": []
+    },
+    {
+      "id": "fc7ec2ba-3ce7-40d9-88ef-34a2c59f0188",
+      "display_name": "txdaldc1nnr001",
+      "ip": "10.254.148.201",
+      "port": 9875,
+      "group": "Data-DataLinq Servers",
+      "critical_apps": []
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=XPression Monitor WebSocket Bridge
+Documentation=https://github.com/your-org/xpmon-web
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/xpmon-web/bridge
+ExecStart=/opt/xpmon-web/venv/bin/python xpmon_bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xpmon-bridge
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/xpmon-web/public
+
+[Install]
+WantedBy=multi-user.target
