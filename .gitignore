@@ -1,0 +1,14 @@
+# Python
+bridge/__pycache__/
+bridge/venv/
+bridge/*.bak
+bridge/*.bak2
+*.pyc
+
+# Config (contains live host list — commit a blank template instead)
+# Uncomment if you don't want to track config.json:
+# public/config.json
+
+# OS
+.DS_Store
+Thumbs.db
