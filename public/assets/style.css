@@ -5,13 +5,9 @@
 :root {
   --bg-base:       #0d0f14;
   --bg-surface:    #141720;
-  --bg-card:       #1a1e2b;
   --bg-card:       #303030;
-  --bg-card-hover: #1f2435;
   --bg-card-hover: #404040;
   --bg-header:     #111420;
-  --bg-header:     #111420;
-  --bg-expand:     #12151f;
   --bg-expand:     #303030;
 
   --accent:        #00b4d8;
@@ -262,7 +258,6 @@ html, body {
   border-radius: 3px;
   border: 1px solid rgba(255,255,255,0.15);
   flex-shrink: 0;
-  title: "Door color";
 }
 
 .badge {
