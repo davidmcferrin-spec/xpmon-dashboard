@@ -43,6 +43,35 @@ let editTargetHostId   = null; // host being edited
 let pendingCommand     = null; // { id, name, command }
 
 // ---------------------------------------------------------------------------
+// Auth / permissions (from PHP session via window.XPMON_USER)
+// ---------------------------------------------------------------------------
+
+const XPMON_USER = window.XPMON_USER || { permissions: {}, prefs: {} };
+
+function can(perm) {
+  return !!(XPMON_USER.permissions && XPMON_USER.permissions[perm]);
+}
+
+function userPrefs() {
+  return XPMON_USER.prefs || {};
+}
+
+function pref(key, fallback) {
+  const p = userPrefs();
+  return p[key] !== undefined ? p[key] : fallback;
+}
+
+const WS_GUARDED_ACTIONS = {
+  add_host: 'manage_hosts',
+  remove_host: 'manage_hosts',
+  edit_host: 'manage_hosts',
+  import_xcl: 'manage_hosts',
+  update_group: 'manage_hosts',
+  set_critical_apps: 'manage_hosts',
+  host_command: 'execute_host_commands',
+};
+
+// ---------------------------------------------------------------------------
 // Audio
 // ---------------------------------------------------------------------------
 
@@ -196,10 +225,13 @@ function hostHasActiveAlert(hostId) {
 }
 
 function triggerAlert(hostId, message) {
-  playAlertSound();
-  flashCard(hostId);
-  toast('error', `⚠ ${message}`, 8000);
-  console.warn(`[ALERT] ${message}`);
+  const mode = pref('alert_mode', 'both');
+  if (mode === 'horn' || mode === 'both') playAlertSound();
+  if (mode === 'flash' || mode === 'both') flashCard(hostId);
+  if (mode !== 'none') {
+    toast('error', `⚠ ${message}`, 8000);
+    console.warn(`[ALERT] ${message}`);
+  }
 }
 
 function flashCard(hostId) {
@@ -257,6 +289,11 @@ function scheduleReconnect() {
 
 function wsSend(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) {
+    const required = WS_GUARDED_ACTIONS[obj.action];
+    if (required && !can(required)) {
+      toast('error', 'You do not have permission for that action');
+      return;
+    }
     ws.send(JSON.stringify(obj));
   }
 }
@@ -447,6 +484,23 @@ function buildHostCard(host, expanded) {
   const metaParts = [host.ip, versionStr].filter(Boolean);
 
   const criticalApps = new Set(host.critical_apps || []);
+  const showDoor = host.door_detected && !pref('hide_door', false);
+  const showUpd = host.win_updates > 0 && !pref('hide_win_updates', false);
+
+  const footerButtons = [];
+  if (can('manage_hosts')) {
+    footerButtons.push('<button class="btn btn-sm btn-secondary" data-action="edit">✎ Edit</button>');
+  }
+  if (can('view_host_commands')) {
+    const exec = can('execute_host_commands');
+    const dis = exec ? '' : ' disabled title="View only — no execute permission"';
+    footerButtons.push(`<button class="btn btn-sm btn-success btn-cmd" data-action="start"${dis}>▶ Start All</button>`);
+    footerButtons.push(`<button class="btn btn-sm btn-warning btn-cmd" data-action="stop"${dis}>■ Stop All</button>`);
+    footerButtons.push(`<button class="btn btn-sm btn-danger  btn-cmd" data-action="reboot"${dis}>⟳ Reboot</button>`);
+  }
+  const footerHtml = footerButtons.length
+    ? `<div class="card-footer">${footerButtons.join('')}</div>`
+    : '';
 
   card.innerHTML = `
     <div class="card-header">
@@ -456,8 +510,8 @@ function buildHostCard(host, expanded) {
         <div class="card-meta">${metaParts.map(esc).join(' · ')}</div>
       </div>
       <div class="card-badges">
-        ${host.door_detected ? `<span class="door-swatch" style="background:${doorRgb}" title="Door color"></span>` : ''}
-        ${host.win_updates > 0 ? `<span class="badge badge-update" title="${host.win_updates} update(s) pending${host.win_pending_restart ? ' · Restart required' : ''}">UPD</span>` : ''}
+        ${showDoor ? `<span class="door-swatch" style="background:${doorRgb}" title="Door color"></span>` : ''}
+        ${showUpd ? `<span class="badge badge-update" title="${host.win_updates} update(s) pending${host.win_pending_restart ? ' · Restart required' : ''}">UPD</span>` : ''}
         <span class="badge ${host.connected ? 'badge-connected' : 'badge-offline'}">${host.connected ? 'ONLINE' : 'OFFLINE'}</span>
       </div>
       <span class="card-expand-icon">▼</span>
@@ -466,12 +520,7 @@ function buildHostCard(host, expanded) {
       ${buildDiskSection(host.disks)}
       ${buildCanvasSection(host)}
       ${buildAppSection(host.apps, criticalApps, host.upgrade_grace)}
-      <div class="card-footer">
-        <button class="btn btn-sm btn-secondary" data-action="edit">✎ Edit</button>
-        <button class="btn btn-sm btn-success btn-cmd" data-action="start">▶ Start All</button>
-        <button class="btn btn-sm btn-warning btn-cmd" data-action="stop">■ Stop All</button>
-        <button class="btn btn-sm btn-danger  btn-cmd" data-action="reboot">⟳ Reboot</button>
-      </div>
+      ${footerHtml}
     </div>
   `;
 
@@ -487,10 +536,17 @@ function buildHostCard(host, expanded) {
       if (e.target.closest('.card-header')) card.classList.toggle('expanded');
       return;
     }
+    if (btn.disabled) return;
     e.stopPropagation();
     const action = btn.dataset.action;
     if      (action === 'edit')   openEditModal(host.id);
-    else if (['start','stop','reboot'].includes(action)) openCommandModal(host.id, host.display_name, action);
+    else if (['start','stop','reboot'].includes(action)) {
+      if (!can('execute_host_commands')) {
+        toast('error', 'You do not have permission to run host commands');
+        return;
+      }
+      openCommandModal(host.id, host.display_name, action);
+    }
   });
 
   return card;
@@ -537,7 +593,11 @@ function buildDiskSection(disks) {
 function buildAppSection(apps, criticalApps, upgradeGrace) {
   if (!apps || apps.length === 0) return '';
 
-  const rows = apps.map(app => {
+  const showIgnored = pref('show_ignored_services', true);
+  const filtered = showIgnored ? apps : apps.filter(a => !a.ignore_status);
+  if (filtered.length === 0) return '';
+
+  const rows = filtered.map(app => {
     let stateClass, stateLabel;
     if (app.ignore_status) {
       stateClass = 'app-ignored';
@@ -623,11 +683,14 @@ function groupHosts() {
 }
 
 function emptyStateHTML() {
+  const addBtn = can('manage_hosts')
+    ? '<button class="btn" onclick="document.getElementById(\'btnAddHost\').click()">+ Add Host</button>'
+    : '';
   return `
     <div class="empty-state">
       <h3>No hosts configured</h3>
       <p>Add a host manually or import a <code>.xcl</code> file from XPression Status Client.</p>
-      <button class="btn" onclick="document.getElementById('btnAddHost').click()">+ Add Host</button>
+      ${addBtn}
     </div>`;
 }
 
@@ -668,7 +731,7 @@ function openAlertsModal(hostId, hostName) {
   openModal('modalAlerts');
 }
 
-document.getElementById('btnAlertsSave').addEventListener('click', () => {
+document.getElementById('btnAlertsSave')?.addEventListener('click', () => {
   if (!alertsTargetHostId) return;
 
   const checked = [...document.querySelectorAll('#alertsAppList input[type=checkbox]:checked')]
@@ -684,7 +747,7 @@ document.getElementById('btnAlertsSave').addEventListener('click', () => {
   alertsTargetHostId = null;
 });
 
-document.getElementById('btnAlertsTest').addEventListener('click', () => {
+document.getElementById('btnAlertsTest')?.addEventListener('click', () => {
   playAlertSound();
 });
 
@@ -712,7 +775,7 @@ function openCommandModal(hostId, hostName, command) {
   openModal('modalCommand');
 }
 
-document.getElementById('btnCmdConfirm').addEventListener('click', () => {
+document.getElementById('btnCmdConfirm')?.addEventListener('click', () => {
   if (!pendingCommand) return;
   wsSend({ action: 'host_command', id: pendingCommand.id, command: pendingCommand.command });
   const card = document.getElementById(`host-${pendingCommand.id}`);
@@ -754,14 +817,14 @@ function openEditModal(hostId) {
   openModal('modalEditHost');
 }
 
-document.getElementById('btnEditOpenAlerts').addEventListener('click', () => {
+document.getElementById('btnEditOpenAlerts')?.addEventListener('click', () => {
   if (!editTargetHostId) return;
   const host = hosts.get(editTargetHostId);
   closeModal('modalEditHost');
   openAlertsModal(editTargetHostId, host ? host.display_name : editTargetHostId);
 });
 
-document.getElementById('btnEditRemoveHost').addEventListener('click', () => {
+document.getElementById('btnEditRemoveHost')?.addEventListener('click', () => {
   if (!editTargetHostId) return;
   const host = hosts.get(editTargetHostId);
   closeModal('modalEditHost');
@@ -769,11 +832,11 @@ document.getElementById('btnEditRemoveHost').addEventListener('click', () => {
   editTargetHostId = null;
 });
 
-document.getElementById('editCanvasEnabled').addEventListener('change', function() {
+document.getElementById('editCanvasEnabled')?.addEventListener('change', function() {
   document.getElementById('editCanvasPortRow').style.display = this.checked ? '' : 'none';
 });
 
-document.getElementById('btnEditHostSubmit').addEventListener('click', () => {
+document.getElementById('btnEditHostSubmit')?.addEventListener('click', () => {
   const id     = document.getElementById('editHostId').value;
   const name   = document.getElementById('editName').value.trim();
   const ip     = document.getElementById('editIp').value.trim();
@@ -811,12 +874,12 @@ document.querySelectorAll('[data-modal]').forEach(btn => {
 });
 
 // Add Host
-document.getElementById('btnAddHost').addEventListener('click', () => {
+document.getElementById('btnAddHost')?.addEventListener('click', () => {
   openModal('modalAddHost');
   document.getElementById('addName').focus();
 });
 
-document.getElementById('btnAddHostSubmit').addEventListener('click', () => {
+document.getElementById('btnAddHostSubmit')?.addEventListener('click', () => {
   const name  = document.getElementById('addName').value.trim();
   const ip    = document.getElementById('addIp').value.trim();
   const port  = parseInt(document.getElementById('addPort').value) || 9875;
@@ -834,39 +897,41 @@ document.getElementById('btnAddHostSubmit').addEventListener('click', () => {
 });
 
 // Import XCL
-document.getElementById('btnImport').addEventListener('click', () => openModal('modalImport'));
+document.getElementById('btnImport')?.addEventListener('click', () => openModal('modalImport'));
 
 const xclFile         = document.getElementById('xclFile');
 const xclDrop         = document.getElementById('xclDropZone');
 const xclLabel        = document.getElementById('xclDropLabel');
 const btnImportSubmit = document.getElementById('btnImportSubmit');
 
+if (xclDrop) {
 xclDrop.addEventListener('click', () => xclFile.click());
 xclDrop.addEventListener('dragover', (e) => { e.preventDefault(); xclDrop.classList.add('drag-over'); });
 xclDrop.addEventListener('dragleave', () => xclDrop.classList.remove('drag-over'));
 xclDrop.addEventListener('drop', (e) => { e.preventDefault(); xclDrop.classList.remove('drag-over'); loadXclFile(e.dataTransfer.files[0]); });
-xclFile.addEventListener('change', () => { if (xclFile.files[0]) loadXclFile(xclFile.files[0]); });
+}
+xclFile?.addEventListener('change', () => { if (xclFile.files[0]) loadXclFile(xclFile.files[0]); });
 
 function loadXclFile(file) {
-  if (!file) return;
+  if (!file || !xclLabel) return;
   const reader = new FileReader();
   reader.onload = (e) => {
     xclFileContent = e.target.result;
     xclLabel.textContent = `✓ ${file.name}`;
     xclDrop.classList.add('has-file');
-    btnImportSubmit.disabled = false;
+    if (btnImportSubmit) btnImportSubmit.disabled = false;
   };
   reader.readAsText(file);
 }
 
-btnImportSubmit.addEventListener('click', () => {
+btnImportSubmit?.addEventListener('click', () => {
   if (!xclFileContent) return;
   wsSend({ action: 'import_xcl', xml: xclFileContent });
   xclFileContent = null;
   xclLabel.textContent = 'Drop .xcl file here or click to browse';
   xclDrop.classList.remove('has-file');
-  btnImportSubmit.disabled = true;
-  xclFile.value = '';
+  if (btnImportSubmit) btnImportSubmit.disabled = true;
+  if (xclFile) xclFile.value = '';
 });
 
 // Remove host
@@ -876,7 +941,7 @@ function openRemoveModal(id, name) {
   openModal('modalRemove');
 }
 
-document.getElementById('btnRemoveConfirm').addEventListener('click', () => {
+document.getElementById('btnRemoveConfirm')?.addEventListener('click', () => {
   if (pendingRemoveId) {
     wsSend({ action: 'remove_host', id: pendingRemoveId });
     pendingRemoveId = null;
@@ -938,10 +1003,22 @@ function formatBytes(bytes) {
 // ---------------------------------------------------------------------------
 
 (function initTheme() {
-  const saved = localStorage.getItem('xpmon-theme') || 'dark';
+  const saved = pref('theme', localStorage.getItem('xpmon-theme') || 'dark');
   document.documentElement.setAttribute('data-theme', saved);
+  localStorage.setItem('xpmon-theme', saved);
   updateThemeButton(saved);
 })();
+
+async function saveThemePreference(theme) {
+  localStorage.setItem('xpmon-theme', theme);
+  try {
+    await fetch('api/profile.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_prefs', theme }),
+    });
+  } catch (e) { /* localStorage fallback */ }
+}
 
 function updateThemeButton(theme) {
   const btn = document.getElementById('btnTheme');
@@ -956,9 +1033,104 @@ if (btnTheme) {
     const current = document.documentElement.getAttribute('data-theme') || 'dark';
     const next    = current === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('xpmon-theme', next);
     updateThemeButton(next);
+    saveThemePreference(next);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Profile modal
+// ---------------------------------------------------------------------------
+
+function applyPrefsToProfileForm() {
+  const p = userPrefs();
+  const themeEl = document.getElementById('prefTheme');
+  if (themeEl) themeEl.value = p.theme || 'dark';
+  const alertEl = document.getElementById('prefAlertMode');
+  if (alertEl) alertEl.value = p.alert_mode || 'both';
+  const ign = document.getElementById('prefShowIgnored');
+  if (ign) ign.checked = p.show_ignored_services !== false;
+  const door = document.getElementById('prefHideDoor');
+  if (door) door.checked = !!p.hide_door;
+  const upd = document.getElementById('prefHideWinUpdates');
+  if (upd) upd.checked = !!p.hide_win_updates;
+}
+
+document.getElementById('btnProfile')?.addEventListener('click', () => {
+  applyPrefsToProfileForm();
+  openModal('modalProfile');
+});
+
+document.getElementById('btnSaveProfile')?.addEventListener('click', async () => {
+  const payload = {
+    action: 'save_prefs',
+    theme: document.getElementById('prefTheme')?.value,
+    alert_mode: document.getElementById('prefAlertMode')?.value,
+    show_ignored_services: document.getElementById('prefShowIgnored')?.checked,
+    hide_door: document.getElementById('prefHideDoor')?.checked,
+    hide_win_updates: document.getElementById('prefHideWinUpdates')?.checked,
+  };
+  try {
+    const r = await fetch('api/profile.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (d.prefs) XPMON_USER.prefs = d.prefs;
+      else Object.assign(XPMON_USER.prefs, payload);
+      if (payload.theme) {
+        document.documentElement.setAttribute('data-theme', payload.theme);
+        localStorage.setItem('xpmon-theme', payload.theme);
+        updateThemeButton(payload.theme);
+      }
+      renderAll();
+      toast('success', 'Profile saved');
+      closeModal('modalProfile');
+    } else {
+      toast('error', d.error || 'Save failed');
+    }
+  } catch (e) {
+    toast('error', 'Save failed');
+  }
+});
+
+async function changePassword(current, newPass) {
+  const r = await fetch('api/profile.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'change_password', current_password: current, new_password: newPass }),
+  });
+  return r.json();
+}
+
+document.getElementById('btnChangePassword')?.addEventListener('click', async () => {
+  const d = await changePassword(
+    document.getElementById('pwCurrent')?.value,
+    document.getElementById('pwNew')?.value
+  );
+  if (d.ok) {
+    toast('success', 'Password updated');
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+  } else toast('error', d.error || 'Password change failed');
+});
+
+document.getElementById('btnForcePassword')?.addEventListener('click', async () => {
+  const d = await changePassword(
+    document.getElementById('forcePwCurrent')?.value,
+    document.getElementById('forcePwNew')?.value
+  );
+  if (d.ok) {
+    toast('success', 'Password updated');
+    closeModal('modalForcePassword');
+    location.reload();
+  } else toast('error', d.error || 'Password change failed');
+});
+
+if (document.getElementById('modalForcePassword')) {
+  openModal('modalForcePassword');
 }
 
 // ---------------------------------------------------------------------------

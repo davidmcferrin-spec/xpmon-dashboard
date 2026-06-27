@@ -2,18 +2,18 @@
 ## TO DO ITEMS
 ##
 
-## Add Local and LDAP Auth, Bind to User, no search,
-##     Manually add approved users and groups
-
 ## Change to profile based Alerts, allow a user
 ##     to change what Systems and how alerts
-##     (Flash/Horn/Both/None) happen
-
-## Allow user to pick if they want 'Ignored' services to be shown
-
-## Allow user/admin to hide Windows Updates and Door (Admin can set global and override user)
+##     (Flash/Horn/Both/None) happen — per-host selection still global
 
 ## COMPLETED ──────────────────────────────────────────────────────────────────
+
+## [DONE] Add Local and LDAP Auth — PHP sessions, roles, LDAPS user bind,
+##     LDAP groups → roles, admin UI, default admin/admin (change on first login)
+
+## [DONE] Allow user to pick if they want 'Ignored' services to be shown — profile pref
+
+## [DONE] Allow user/admin to hide Windows Updates and Door — profile pref + admin force
 
 ## [DONE] Make bridge stop faster — fast shutdown via SIGTERM, force-closes
 ##     all WebSocket connections immediately, returns in <2s

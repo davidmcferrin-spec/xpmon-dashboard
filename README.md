@@ -18,6 +18,8 @@ Web-based status dashboard for Ross Video XPression Monitor servers. Replaces th
 - **Bridge admin page** — live log tail, service start/stop/restart from the browser
 - **Light/dark theme** — toggle in topbar, saved per browser
 - **Host management** — add, edit, remove hosts; group organization; drag-and-drop XCL import
+- **Authentication** — local + LDAP (LDAPS) login, role-based access, user profiles
+- **Admin panel** — users, LDAP groups, global preference overrides
 
 ---
 
@@ -35,9 +37,16 @@ public/                   PHP/Apache — serves dashboard HTML
   bridge.php              Bridge admin (log tail + service controls)
   log.php                 AJAX endpoint for bridge admin
   xcl.php                 XCL export endpoint
+  login.php               Login page
+  admin.php               User / LDAP / global settings admin
+  includes/auth.php       Session auth and roles
+  api/profile.php         User profile preferences API
+  api/admin.php           Admin API
   assets/app.js           WebSocket client + UI
   assets/style.css        Dark/light theme
   config.json             Host persistence (written by bridge)
+data/
+  auth.json               Users, LDAP config (auto-created on first login)
 ```
 
 ---
@@ -46,7 +55,7 @@ public/                   PHP/Apache — serves dashboard HTML
 
 - Python 3.10+
 - Apache 2.4+ with mod_php
-- PHP 8.2+
+- PHP 8.2+ with `ldap` extension (for LDAP login: `sudo apt install php-ldap`)
 - Network access from bridge host to XPression servers on TCP/9875
 - `www-data` sudoers entries for bridge admin (see below)
 
@@ -58,9 +67,12 @@ public/                   PHP/Apache — serves dashboard HTML
 
 ```bash
 sudo mkdir -p /opt/xpmon-web
-sudo cp -r bridge/ public/ /opt/xpmon-web/
+sudo cp -r bridge/ public/ data/ /opt/xpmon-web/
 sudo chown -R www-data:www-data /opt/xpmon-web
+sudo chmod 750 /opt/xpmon-web/data
 ```
+
+On first visit to the login page, `data/auth.json` is created with default credentials **`admin` / `admin`**. You will be prompted to change the password on first login.
 
 ### 2. Python virtual environment
 
@@ -111,9 +123,27 @@ sudo systemctl status xpmon-bridge
 ```bash
 sudo chown www-data:www-data /opt/xpmon-web/public/config.json
 sudo chmod 664 /opt/xpmon-web/public/config.json
+sudo chown www-data:www-data /opt/xpmon-web/data
+sudo chmod 750 /opt/xpmon-web/data
 ```
 
-### 6. Sudoers for bridge admin page
+### 6. Authentication and roles
+
+| Role | Dashboard | XCL export | Bridge log | Bridge control | Host mgmt | Host commands |
+|------|-----------|------------|------------|----------------|-----------|---------------|
+| admin | ✓ | ✓ | ✓ | ✓ | ✓ | view + execute |
+| operator | ✓ | | | | | view + execute |
+| control_viewer | ✓ | | | | | view only |
+| bridge_monitor | ✓ | | ✓ | | | |
+| viewer | ✓ | | | | | |
+
+Users can hold multiple roles (permissions are combined). Configure users and LDAP in **Admin** after signing in.
+
+LDAP uses LDAPS with user bind (`{username}` in bind template). AD group names can be mapped to roles for automatic access without pre-creating accounts.
+
+**Note:** WebSocket (`:8765`) is not authenticated — UI and PHP endpoints enforce access. Restrict port 8765 at the firewall to trusted subnets.
+
+### 7. Sudoers for bridge admin page
 
 ```bash
 sudo visudo -f /etc/sudoers.d/xpmon-bridge

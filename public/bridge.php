@@ -3,6 +3,11 @@
  * bridge.php — XPression Monitor Bridge Admin
  * Live log tail, service start/stop/restart, and status indicator.
  */
+require_once __DIR__ . '/includes/auth.php';
+require_permission('bridge_view');
+
+$user = session_user_payload_full();
+$canControl = !empty($user['permissions']['bridge_control']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -173,6 +178,8 @@
     </nav>
   </div>
   <div class="topbar-right">
+    <span class="topbar-user"><?= htmlspecialchars($user['username']) ?></span>
+    <a href="logout.php" class="btn btn-sm btn-secondary">Logout</a>
     <div class="service-status" id="serviceStatus">
       <span class="service-dot"></span>
       <span class="service-label">Checking…</span>
@@ -183,7 +190,7 @@
 <div class="bridge-page">
   <div class="bridge-header">
     <div class="bridge-title">xpmon-bridge Service</div>
-    <div class="bridge-controls">
+    <div class="bridge-controls" id="bridgeControls" <?= $canControl ? '' : 'hidden' ?>>
       <button class="btn btn-success" id="btnStart"   data-action="start">▶ Start</button>
       <button class="btn btn-warning" id="btnStop"    data-action="stop">■ Stop</button>
       <button class="btn btn-secondary" id="btnRestart" data-action="restart">⟳ Restart</button>

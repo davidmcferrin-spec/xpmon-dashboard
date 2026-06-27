@@ -3,10 +3,10 @@
  * xcl.php — Export host list as StatusClientList.xcl
  * Generates a Ross Video XPression Status Client compatible XCL file
  * from the current config.json host list.
- *
- * Compatible with XPression Status Client v12.x
- * XCL schema reverse-engineered from native client export.
  */
+
+require_once __DIR__ . '/includes/auth.php';
+require_permission('xcl_export');
 
 $config_path = __DIR__ . '/config.json';
 
@@ -21,7 +21,6 @@ if (!$config || !isset($config['hosts'])) {
     die('Invalid config.json');
 }
 
-// Null GUID used for ungrouped clients (matches native client behaviour)
 $null_guid = '{00000000-0000-0000-0000-000000000000}';
 
 function xml_esc(string $val): string {
@@ -33,7 +32,6 @@ foreach ($config['hosts'] as $host) {
     $name     = xml_esc($host['display_name'] ?? '');
     $ip       = xml_esc($host['ip'] ?? '');
     $port     = (int)($host['port'] ?? 9875);
-    // Use reported hostname from state if available, fall back to IP
     $hostname = xml_esc($host['ip'] ?? '');
     $reported = xml_esc(strtolower($host['display_name'] ?? $host['ip'] ?? ''));
 

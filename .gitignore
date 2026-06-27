@@ -9,6 +9,9 @@ bridge/*.bak2
 # Uncomment if you don't want to track config.json:
 # public/config.json
 
+# Auth data (password hashes, LDAP config)
+data/auth.json
+
 # OS
 .DS_Store
 Thumbs.db
