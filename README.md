@@ -136,8 +136,13 @@ sudo chmod 750 /opt/xpmon-web/data
 | control_viewer | ✓ | | | | | view only |
 | bridge_monitor | ✓ | | ✓ | | | |
 | viewer | ✓ | | | | | |
+| kiosk | ✓ (wall display) | | | | | |
 
 Users can hold multiple roles (permissions are combined). Configure users and LDAP in **Admin** after signing in.
+
+**Session timeout:** Normal users are logged out after **120 minutes** of inactivity by default. Change this under **Admin → Session Settings**. Users with the **kiosk** role skip idle timeout and receive a long-lived session cookie (intended for control-room wall displays).
+
+**Kiosk setup:** Create a local user (e.g. `wall-display`), assign only the **kiosk** role, sign in once on the wall PC — the dashboard uses a minimal topbar with no logout/admin controls.
 
 LDAP uses LDAPS with user bind (`{username}` in bind template). AD group names can be mapped to roles for automatic access without pre-creating accounts.
 

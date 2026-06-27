@@ -85,7 +85,23 @@ const DEFAULT_ROLES = [
             'manage_users' => false,
         ],
     ],
+    'kiosk' => [
+        'label' => 'Kiosk (wall display)',
+        'permissions' => [
+            'dashboard' => true,
+            'xcl_export' => false,
+            'bridge_view' => false,
+            'bridge_control' => false,
+            'manage_hosts' => false,
+            'view_host_commands' => false,
+            'execute_host_commands' => false,
+            'manage_users' => false,
+        ],
+    ],
 ];
+
+/** Session cookie lifetime for kiosk accounts (1 year). */
+const KIOSK_SESSION_LIFETIME = 31536000;
 
 const DEFAULT_PREFS = [
     'theme' => 'dark',
@@ -96,6 +112,7 @@ const DEFAULT_PREFS = [
 ];
 
 const DEFAULT_GLOBAL = [
+    'session_idle_minutes' => 120,
     'force_alert_mode' => null,
     'force_show_ignored_services' => null,
     'force_hide_door' => null,
@@ -114,10 +131,6 @@ const DEFAULT_LDAP = [
     'ignore_cert' => true,
     'allowed_groups' => [],
 ];
-
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 
 // ---------------------------------------------------------------------------
 // Data file
@@ -283,6 +296,79 @@ function has_permission(string $perm): bool
     return !empty($payload['permissions'][$perm]);
 }
 
+function session_idle_minutes(): int
+{
+    $data = load_auth_data();
+    return max(5, min(1440, (int)($data['global']['session_idle_minutes'] ?? 120)));
+}
+
+function user_has_kiosk_role(array $user): bool
+{
+    return in_array('kiosk', $user['roles'] ?? [], true);
+}
+
+function is_kiosk_session(): bool
+{
+    if (!is_logged_in()) {
+        return false;
+    }
+    if (!empty($_SESSION['kiosk'])) {
+        return true;
+    }
+    $user = current_user_record_with_ldap();
+    return $user !== null && user_has_kiosk_role($user);
+}
+
+function init_session(): void
+{
+    if (session_status() !== PHP_SESSION_NONE) {
+        return;
+    }
+    $gcLifetime = max(session_idle_minutes() * 60, KIOSK_SESSION_LIFETIME);
+    ini_set('session.gc_maxlifetime', (string)$gcLifetime);
+    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'secure'   => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
+
+function refresh_session_cookie(int $lifetime): void
+{
+    $p = session_get_cookie_params();
+    setcookie(session_name(), session_id(), [
+        'expires'  => $lifetime > 0 ? time() + $lifetime : 0,
+        'path'     => $p['path'] ?: '/',
+        'domain'   => $p['domain'] ?? '',
+        'secure'   => $p['secure'] ?? false,
+        'httponly' => $p['httponly'] ?? true,
+        'samesite' => $p['samesite'] ?? 'Lax',
+    ]);
+}
+
+function check_session_idle(string $redirect = 'login.php'): void
+{
+    if (is_kiosk_session()) {
+        return;
+    }
+    $idleSec = session_idle_minutes() * 60;
+    $last = (int)($_SESSION['last_activity'] ?? $_SESSION['login_at'] ?? 0);
+    if ($last > 0 && (time() - $last) > $idleSec) {
+        logout_user();
+        header('Location: ' . $redirect . '?reason=timeout');
+        exit;
+    }
+}
+
+function touch_session(): void
+{
+    $_SESSION['last_activity'] = time();
+}
+
 function require_login(string $redirect = 'login.php'): void
 {
     if (!is_logged_in()) {
@@ -296,6 +382,8 @@ function require_login(string $redirect = 'login.php'): void
         header('Location: ' . $redirect);
         exit;
     }
+    check_session_idle($redirect);
+    touch_session();
 }
 
 function require_permission(string $perm): void
@@ -309,9 +397,14 @@ function require_permission(string $perm): void
 
 function login_user(array $user): void
 {
+    $kiosk = user_has_kiosk_role($user);
     session_regenerate_id(true);
     $_SESSION['user_id'] = $user['id'];
     $_SESSION['username'] = $user['username'];
+    $_SESSION['kiosk'] = $kiosk;
+    $_SESSION['login_at'] = time();
+    $_SESSION['last_activity'] = time();
+    refresh_session_cookie($kiosk ? KIOSK_SESSION_LIFETIME : 0);
 }
 
 function logout_user(): void
@@ -542,8 +635,11 @@ function session_user_payload_full(): ?array
         'permissions' => $perms,
         'prefs' => $prefs,
         'must_change_password' => !empty($user['must_change_password']),
+        'is_kiosk' => is_kiosk_session(),
     ];
 }
+
+init_session();
 
 function json_response(array $payload, int $code = 200): void
 {

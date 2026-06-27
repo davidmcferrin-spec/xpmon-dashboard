@@ -86,6 +86,17 @@ $user = session_user_payload_full();
   </section>
 
   <section class="admin-section">
+    <h2>Session Settings</h2>
+    <p class="hint">Normal users are logged out after this many minutes of inactivity. Users with the <strong>Kiosk</strong> role stay signed in indefinitely (long-lived session cookie).</p>
+    <form id="sessionForm" class="admin-form">
+      <label>Session idle timeout (minutes)
+        <input type="number" id="sessionIdleMinutes" min="5" max="1440" value="120">
+      </label>
+      <button type="submit" class="btn btn-sm">Save Session Settings</button>
+    </form>
+  </section>
+
+  <section class="admin-section">
     <h2>Global Preferences</h2>
     <p class="hint">Force values override individual user settings. Leave force fields empty to allow user choice.</p>
     <form id="globalForm" class="admin-form">
@@ -250,6 +261,7 @@ function renderGroups() {
 
 function renderGlobal() {
   const g = adminData.global;
+  document.getElementById('sessionIdleMinutes').value = g.session_idle_minutes ?? 120;
   document.getElementById('forceAlertMode').value = g.force_alert_mode ?? '';
   document.getElementById('forceShowIgnored').value = g.force_show_ignored_services === null ? '' : (g.force_show_ignored_services ? '1' : '0');
   document.getElementById('forceHideDoor').value = g.force_hide_door === null ? '' : (g.force_hide_door ? '1' : '0');
@@ -348,6 +360,14 @@ document.getElementById('btnAddGroup').addEventListener('click', async () => {
     toast('success', 'Group added');
     loadAdmin();
   } else toast('error', d.error);
+});
+
+document.getElementById('sessionForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const mins = parseInt(document.getElementById('sessionIdleMinutes').value, 10) || 120;
+  const d = await apiPost('save_global', { session_idle_minutes: mins });
+  if (d.ok) toast('success', 'Session settings saved');
+  else toast('error', d.error);
 });
 
 document.getElementById('globalForm').addEventListener('submit', async (e) => {

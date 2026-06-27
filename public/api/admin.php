@@ -50,7 +50,9 @@ switch ($action) {
 
     case 'save_global':
         $g = $data['global'];
-        $allowedModes = ['none', 'flash', 'horn', 'both', null];
+        if (array_key_exists('session_idle_minutes', $body)) {
+            $g['session_idle_minutes'] = max(5, min(1440, (int)$body['session_idle_minutes']));
+        }
         foreach (['force_alert_mode', 'force_show_ignored_services', 'force_hide_door', 'force_hide_win_updates'] as $k) {
             if (array_key_exists($k, $body)) {
                 $v = $body[$k];

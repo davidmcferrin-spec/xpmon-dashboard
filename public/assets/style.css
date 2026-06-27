@@ -926,3 +926,36 @@ html, body {
 .modal-lg {
   max-width: 520px;
 }
+
+/* ---- Kiosk mode (wall display) ---- */
+body.kiosk-mode .topbar {
+  padding: 0 16px;
+}
+
+body.kiosk-mode .topbar-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.kiosk-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 4px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm);
+}
+
+body.kiosk-mode .dashboard {
+  padding-top: 16px;
+}
+
+body.kiosk-mode .host-card .card-name {
+  font-size: 15px;
+}
+
+body.kiosk-mode .group-title {
+  font-size: 14px;
+}

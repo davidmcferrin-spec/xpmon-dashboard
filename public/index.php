@@ -14,6 +14,7 @@ $canManageHosts = !empty($user['permissions']['manage_hosts']);
 $canXcl = !empty($user['permissions']['xcl_export']);
 $canBridge = !empty($user['permissions']['bridge_view']);
 $canAdmin = !empty($user['permissions']['manage_users']);
+$isKiosk = !empty($user['is_kiosk']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -31,18 +32,19 @@ $canAdmin = !empty($user['permissions']['manage_users']);
     })();
   </script>
 </head>
-<body>
+<body class="<?= $isKiosk ? 'kiosk-mode' : '' ?>">
 
 <header class="topbar">
   <div class="topbar-left">
     <span class="topbar-logo">XP<span class="accent">MON</span></span>
-    <span class="topbar-subtitle">XPression Monitor Dashboard</span>
+    <span class="topbar-subtitle"><?= $isKiosk ? 'Kiosk — XPression Monitor' : 'XPression Monitor Dashboard' ?></span>
   </div>
   <div class="topbar-right">
     <span class="ws-status" id="wsStatus" title="WebSocket bridge connection">
       <span class="ws-dot"></span>
       <span class="ws-label">Connecting…</span>
     </span>
+    <?php if (!$isKiosk): ?>
     <span class="topbar-user" title="<?= htmlspecialchars($user['username']) ?>"><?= htmlspecialchars($user['username']) ?></span>
     <button class="btn btn-sm btn-secondary" id="btnTheme" title="Toggle light/dark theme">🌙</button>
     <button class="btn btn-sm btn-secondary" id="btnProfile" title="Profile settings">Profile</button>
@@ -60,6 +62,9 @@ $canAdmin = !empty($user['permissions']['manage_users']);
     <button class="btn btn-sm btn-secondary" id="btnImport">Import XCL</button>
     <?php endif; ?>
     <a href="logout.php" class="btn btn-sm btn-secondary">Logout</a>
+    <?php else: ?>
+    <span class="kiosk-badge">Kiosk</span>
+    <?php endif; ?>
   </div>
 </header>
 

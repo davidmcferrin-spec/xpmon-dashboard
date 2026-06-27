@@ -22,6 +22,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $error = $result['error'] ?? 'Login failed';
 }
+
+if ($error === '' && ($_GET['reason'] ?? '') === 'timeout') {
+    $error = 'Session expired after ' . session_idle_minutes() . ' minutes of inactivity.';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
