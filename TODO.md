@@ -14,6 +14,8 @@
 
 ## Allow user to pick if they want 'Ignored' services to be shown
 
+## Allow user/admin to hide Windows Updates and Door (Admin can set global and override user)
+
 ## COMPLETED ──────────────────────────────────────────────────────────────────
 
 ## [DONE] Make bridge stop faster — fast shutdown via SIGTERM, force-closes
