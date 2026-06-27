@@ -870,6 +870,34 @@ function formatBytes(bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
+(function initTheme() {
+  const saved = localStorage.getItem('xpmon-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  updateThemeButton(saved);
+})();
+
+function updateThemeButton(theme) {
+  const btn = document.getElementById('btnTheme');
+  if (!btn) return;
+  btn.textContent = theme === 'dark' ? '☀' : '🌙';
+  btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+}
+
+const btnTheme = document.getElementById('btnTheme');
+if (btnTheme) {
+  btnTheme.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next    = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('xpmon-theme', next);
+    updateThemeButton(next);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 

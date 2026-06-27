@@ -120,8 +120,8 @@
       font-family: var(--font-mono);
       font-size: 12px;
       line-height: 1.6;
-      color: #c9d1d9;
-      background: #0d1117;
+      color: var(--log-text, #c9d1d9);
+      background: var(--log-bg, #0d1117);
       padding: 12px 14px;
       height: 520px;
       overflow-y: auto;
@@ -136,7 +136,7 @@
     .log-line { display: block; }
     .log-line.err  { color: #ff7b72; }
     .log-line.warn { color: #e3b341; }
-    .log-line.info { color: #c9d1d9; }
+    .log-line.info { color: var(--log-text, #c9d1d9); }
     .log-line.conn { color: #79c0ff; }
 
     .log-status-bar {
@@ -154,6 +154,13 @@
     /* ---- Confirm modal override ---- */
     .modal-body p { color: var(--text-primary); line-height: 1.6; }
   </style>
+<script>
+  // Apply saved theme before first paint to avoid flash
+  (function() {
+    var t = localStorage.getItem('xpmon-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 </head>
 <body>
 

@@ -26,6 +26,8 @@ $ws_url  = "ws://{$ws_host}:8765";
       <span class="ws-dot"></span>
       <span class="ws-label">Connecting…</span>
     </span>
+    <button class="btn btn-sm btn-secondary" id="btnTheme" title="Toggle light/dark theme">🌙</button>
+    <a href="xcl.php" class="btn btn-sm btn-secondary" title="Export host list as XCL">⬇ XCL</a>
     <a href="bridge.php" class="btn btn-sm btn-secondary">⚙ Bridge</a>
     <button class="btn btn-sm" id="btnAddHost">+ Add Host</button>
     <button class="btn btn-sm btn-secondary" id="btnImport">Import XCL</button>

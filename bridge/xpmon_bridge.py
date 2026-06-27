@@ -33,7 +33,8 @@ from websockets.server import WebSocketServerProtocol
 CONFIG_PATH = Path(__file__).parent.parent / "public" / "config.json"
 WS_HOST = "0.0.0.0"
 WS_PORT = 8765
-OFFLINE_GRACE = 45          # seconds before a silent host is marked offline
+OFFLINE_GRACE = 45          # seconds of silence per watchdog check
+OFFLINE_MISS_LIMIT = 2      # consecutive misses before marking a host offline
 KEEPALIVE_INTERVAL = 20     # seconds between keepalive pings (must be < server idle timeout ~30s)
 DISK_POLL_INTERVAL = 60     # seconds between diskstatus polls
 RECONNECT_DELAY_MIN = 5     # seconds
@@ -92,6 +93,7 @@ class HostState:
     disks: list = field(default_factory=list)
     last_seen: float = 0.0
     critical_apps: list = field(default_factory=list)  # list of app key GUIDs to alert on
+    _miss_count: int = 0  # consecutive watchdog misses (not persisted)
     canvas_enabled: bool = False   # WSS Canvas links enabled
     canvas_port: int = 9056        # WSS Canvas HTTP port
 
@@ -567,17 +569,34 @@ class XPresMonBridge:
     # ---- Offline watchdog ----
 
     async def _offline_watchdog(self):
-        """Periodically check for hosts that have gone silent."""
+        """
+        Periodically check for hosts that have gone silent.
+        A host must miss OFFLINE_MISS_LIMIT consecutive checks before being
+        marked offline. Each check window is OFFLINE_GRACE seconds.
+        This prevents false alarms during brief network hiccups or upgrades.
+        """
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(OFFLINE_GRACE)
             now = time.time()
             for state in self.hosts.values():
                 if state.connected and state.last_seen > 0:
                     if now - state.last_seen > OFFLINE_GRACE:
-                        log.warning(f"[{state.display_name}] offline (no data for {OFFLINE_GRACE}s)")
-                        state.connected = False
-                        state.offline_since = now
-                        await self.broadcast_host(state)
+                        state._miss_count += 1
+                        log.warning(
+                            f"[{state.display_name}] silent for {OFFLINE_GRACE}s "
+                            f"(miss {state._miss_count}/{OFFLINE_MISS_LIMIT})"
+                        )
+                        if state._miss_count >= OFFLINE_MISS_LIMIT:
+                            log.warning(f"[{state.display_name}] marking OFFLINE after {OFFLINE_MISS_LIMIT} misses")
+                            state.connected = False
+                            state.offline_since = now
+                            state._miss_count = 0
+                            await self.broadcast_host(state)
+                    else:
+                        # Host is responding — reset miss counter
+                        if state._miss_count > 0:
+                            log.info(f"[{state.display_name}] recovered, resetting miss counter")
+                            state._miss_count = 0
 
     # ---- Main entry ----
 
@@ -594,8 +613,17 @@ class XPresMonBridge:
         asyncio.create_task(self._offline_watchdog())
 
         log.info(f"WebSocket server starting on ws://{WS_HOST}:{WS_PORT}")
-        async with websockets.serve(self.ws_handler, WS_HOST, WS_PORT):
-            await asyncio.Future()  # run forever
+        ws_server = await websockets.serve(self.ws_handler, WS_HOST, WS_PORT)
+        self._ws_server = ws_server
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(
+                sig,
+                lambda: asyncio.create_task(_shutdown(self, ws_server))
+            )
+
+        await asyncio.Future()  # run until signal
 
 
 # ---------------------------------------------------------------------------
@@ -604,17 +632,30 @@ class XPresMonBridge:
 
 async def main():
     bridge = XPresMonBridge()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(bridge)))
-
     await bridge.run()
 
-async def _shutdown(bridge: XPresMonBridge):
-    log.info("Shutting down...")
+async def _shutdown(bridge: XPresMonBridge, ws_server):
+    """
+    Fast clean shutdown — stop all host tasks immediately, force-close all
+    WebSocket connections without waiting for graceful handshakes, then exit.
+    systemctl stop now returns in <2s instead of waiting 30s for WS timeout.
+    """
+    log.info("Shutting down (fast)...")
+
+    # Stop all XPression TCP client tasks
     for client in bridge.clients.values():
         client.stop()
+
+    # Force-close all open WebSocket connections immediately
+    if bridge.ws_clients:
+        await asyncio.gather(
+            *[ws.close() for ws in list(bridge.ws_clients)],
+            return_exceptions=True,
+        )
+
+    # Close the WS server and stop the event loop
+    ws_server.close()
+    await ws_server.wait_closed()
     asyncio.get_event_loop().stop()
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@
    XPression Monitor Dashboard — Dark Theme
    ============================================================ */
 
-:root {
+/* ---- Dark theme (default) ---- */
+:root,
+[data-theme="dark"] {
   --bg-base:       #0d0f14;
   --bg-surface:    #141720;
   --bg-card:       #303030;
@@ -27,12 +29,47 @@
   --border:        #1e2433;
   --border-bright: #2a3148;
 
-  --radius:        8px;
-  --radius-sm:     4px;
-  --font:          'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-mono:     'Consolas', 'SF Mono', monospace;
+  --log-bg:        #0d1117;
+  --log-text:      #c9d1d9;
+}
 
-  --topbar-h:      52px;
+/* ---- Light theme ---- */
+[data-theme="light"] {
+  --bg-base:       #f0f2f5;
+  --bg-surface:    #ffffff;
+  --bg-card:       #ffffff;
+  --bg-card-hover: #f5f7fa;
+  --bg-header:     #1a1e2b;
+  --bg-expand:     #f8f9fb;
+
+  --accent:        #0096b4;
+  --accent-dim:    #007a94;
+  --green:         #16a34a;
+  --green-dim:     #15803d;
+  --red:           #dc2626;
+  --red-dim:       #b91c1c;
+  --yellow:        #d97706;
+  --gray:          #9ca3af;
+  --gray-light:    #6b7280;
+
+  --text-primary:  #111827;
+  --text-secondary:#374151;
+  --text-muted:    #6b7280;
+
+  --border:        #e5e7eb;
+  --border-bright: #d1d5db;
+
+  --log-bg:        #1e1e1e;
+  --log-text:      #d4d4d4;
+}
+
+/* ---- Shared constants ---- */
+:root {
+  --radius:    8px;
+  --radius-sm: 4px;
+  --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Consolas', 'SF Mono', monospace;
+  --topbar-h:  52px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
