@@ -239,14 +239,14 @@ function handleMessage(msg) {
     case 'host_update': {
       const prev = hosts.get(msg.host.id);
       hosts.set(msg.host.id, msg.host);
-      renderHost(msg.host);
+      scheduleRender(msg.host.id);
       evaluateAlerts(msg.host, prev);
       break;
     }
 
     case 'host_added':
       hosts.set(msg.host.id, msg.host);
-      renderHost(msg.host);
+      scheduleRender(msg.host.id);
       toast('info', `Host added: ${msg.host.display_name}`);
       break;
 
@@ -268,7 +268,7 @@ function handleMessage(msg) {
 
     case 'host_updated':
       hosts.set(msg.host.id, msg.host);
-      renderHost(msg.host);
+      scheduleRender(msg.host.id);
       toast('success', `Host updated: ${msg.host.display_name}`);
       break;
 
@@ -293,6 +293,36 @@ function handleMessage(msg) {
 function hideSplash() {
   const splash = document.getElementById('loadingSplash');
   if (splash) splash.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Render queue — batches DOM updates via requestAnimationFrame
+// Prevents redundant re-renders when multiple host_update messages arrive
+// in the same JS event loop tick (e.g. on initial connect or mass reconnect).
+// ---------------------------------------------------------------------------
+
+/** @type {Set<string>} host IDs queued for re-render */
+const renderQueue = new Set();
+let renderFramePending = false;
+
+function scheduleRender(hostId) {
+  renderQueue.add(hostId);
+  if (!renderFramePending) {
+    renderFramePending = true;
+    requestAnimationFrame(flushRenderQueue);
+  }
+}
+
+function flushRenderQueue() {
+  renderFramePending = false;
+  // Snapshot and clear the queue before rendering so any updates that
+  // arrive during rendering are queued for the next frame, not lost.
+  const toRender = [...renderQueue];
+  renderQueue.clear();
+  for (const id of toRender) {
+    const host = hosts.get(id);
+    if (host) renderHost(host);
+  }
 }
 
 function renderAll() {
