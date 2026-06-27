@@ -82,7 +82,7 @@ $user = session_user_payload_full();
 
   <section class="admin-section">
     <h2>LDAP Groups</h2>
-    <p class="hint">Users in these AD groups can sign in without a pre-created account. Match by group CN or full DN. Hover each role in the list for a description — use <strong>Operator+Reboot</strong> when AD members need reboot, not plain <strong>Operator</strong>.</p>
+    <p class="hint">Users in these AD groups can sign in without a pre-created account. Match by group CN or full DN. Hover each role in the list for a description — use <strong>Operator+Reboot</strong> when AD members need reboot, not plain <strong>Operator</strong>. Use <strong>Edit</strong> to change roles on an existing group.</p>
     <div class="admin-inline-form">
       <input type="text" id="newGroupName" placeholder="Group name (e.g. XPMon-Operators)">
       <select id="newGroupRoles" multiple size="3" title="Hover each role in the list for a description"></select>
@@ -218,6 +218,29 @@ $user = session_user_payload_full();
   </div>
 </div>
 
+<!-- LDAP group edit modal -->
+<div class="modal-overlay" id="modalLdapGroup" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Edit LDAP Group</h2>
+      <button class="modal-close" data-modal="modalLdapGroup">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ldapGroupName">
+      <label>AD group name
+        <input type="text" id="ldapGroupNameDisplay" readonly>
+      </label>
+      <div class="edit-section-title">Roles</div>
+      <p class="hint">Hover a role name for a summary. <strong>Operator</strong> is Start/Stop only; <strong>Operator+Reboot</strong> adds Reboot. Changes apply on the user&apos;s next sign-in.</p>
+      <div id="ldapGroupRolesCheckboxes" class="checkbox-grid"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btnSaveLdapGroup">Save</button>
+      <button class="btn btn-secondary" data-modal="modalLdapGroup">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-container" id="toastContainer"></div>
 
 <script>
@@ -289,9 +312,15 @@ function renderGroups() {
     const roles = typeof g === 'string' ? ['viewer'] : (g.roles || []);
     return `<li class="admin-list-item">
       <span><strong>${esc(name)}</strong> → ${roles.map(esc).join(', ')}</span>
-      <button class="btn btn-sm btn-danger" data-rm-group="${esc(name)}">Remove</button>
+      <span class="admin-list-actions">
+        <button class="btn btn-sm btn-secondary" data-edit-group="${esc(name)}">Edit</button>
+        <button class="btn btn-sm btn-danger" data-rm-group="${esc(name)}">Remove</button>
+      </span>
     </li>`;
   }).join('');
+  list.querySelectorAll('[data-edit-group]').forEach(btn => {
+    btn.addEventListener('click', () => openLdapGroupModal(btn.dataset.editGroup));
+  });
   list.querySelectorAll('[data-rm-group]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const d = await apiPost('remove_ldap_group', { name: btn.dataset.rmGroup });
@@ -387,12 +416,39 @@ function collectPermOverridesFromForm() {
   return overrides;
 }
 
-function roleCheckboxHtml(id, role, checked) {
+function roleCheckboxHtml(id, role, checked, inputName = 'userRole') {
   const tip = esc(role.description || role.label || '');
   return `<label class="checkbox-label role-option" title="${tip}">
-    <input type="checkbox" name="userRole" value="${esc(id)}" ${checked ? 'checked' : ''}>
+    <input type="checkbox" name="${esc(inputName)}" value="${esc(id)}" ${checked ? 'checked' : ''}>
     <span>${esc(role.label)}</span>
   </label>`;
+}
+
+function findLdapGroup(name) {
+  const groups = adminData.ldap.allowed_groups || [];
+  return groups.find(g => {
+    const gn = typeof g === 'string' ? g : g.name;
+    return gn && gn.toLowerCase() === name.toLowerCase();
+  });
+}
+
+function openLdapGroupModal(name) {
+  const entry = findLdapGroup(name);
+  if (!entry) {
+    toast('error', 'Group not found');
+    return;
+  }
+  const groupName = typeof entry === 'string' ? entry : entry.name;
+  const roles = typeof entry === 'string' ? ['viewer'] : (entry.roles || ['viewer']);
+
+  document.getElementById('ldapGroupName').value = groupName;
+  document.getElementById('ldapGroupNameDisplay').value = groupName;
+  document.getElementById('ldapGroupRolesCheckboxes').innerHTML =
+    Object.entries(adminData.roles).map(([id, r]) =>
+      roleCheckboxHtml(id, r, roles.includes(id), 'ldapGroupRole')
+    ).join('');
+
+  document.getElementById('modalLdapGroup').removeAttribute('hidden');
 }
 
 function openUserModal(userId) {
@@ -484,6 +540,21 @@ document.getElementById('btnAddGroup').addEventListener('click', async () => {
   if (d.ok) {
     document.getElementById('newGroupName').value = '';
     toast('success', 'Group added');
+    loadAdmin();
+  } else toast('error', d.error);
+});
+
+document.getElementById('btnSaveLdapGroup').addEventListener('click', async () => {
+  const name = document.getElementById('ldapGroupName').value;
+  const roles = [...document.querySelectorAll('input[name=ldapGroupRole]:checked')].map(c => c.value);
+  if (!roles.length) {
+    toast('error', 'Select at least one role');
+    return;
+  }
+  const d = await apiPost('update_ldap_group', { name, roles });
+  if (d.ok) {
+    toast('success', 'Group roles updated');
+    document.getElementById('modalLdapGroup').setAttribute('hidden', '');
     loadAdmin();
   } else toast('error', d.error);
 });

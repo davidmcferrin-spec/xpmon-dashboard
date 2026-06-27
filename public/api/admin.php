@@ -98,6 +98,33 @@ switch ($action) {
         save_auth_data($data);
         json_response(['ok' => true, 'allowed_groups' => $data['ldap']['allowed_groups']]);
 
+    case 'update_ldap_group':
+        $name = trim($body['name'] ?? '');
+        $roles = $body['roles'] ?? ['viewer'];
+        if ($name === '') {
+            json_response(['ok' => false, 'error' => 'Group name required'], 400);
+        }
+        $roles = array_values(array_filter($roles, fn($r) => isset(DEFAULT_ROLES[$r])));
+        if (empty($roles)) {
+            $roles = ['viewer'];
+        }
+        $found = false;
+        foreach ($data['ldap']['allowed_groups'] as $i => $g) {
+            $gn = is_array($g) ? ($g['name'] ?? '') : $g;
+            if (strcasecmp($gn, $name) !== 0) {
+                continue;
+            }
+            $storedName = is_array($g) ? ($g['name'] ?? $name) : $g;
+            $data['ldap']['allowed_groups'][$i] = ['name' => $storedName, 'roles' => $roles];
+            $found = true;
+            break;
+        }
+        if (!$found) {
+            json_response(['ok' => false, 'error' => 'Group not found'], 404);
+        }
+        save_auth_data($data);
+        json_response(['ok' => true, 'allowed_groups' => $data['ldap']['allowed_groups']]);
+
     case 'remove_ldap_group':
         $name = trim($body['name'] ?? '');
         $data['ldap']['allowed_groups'] = array_values(array_filter(
