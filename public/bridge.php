@@ -15,6 +15,7 @@ $canControl = !empty($user['permissions']['bridge_control']);
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bridge Admin — XPression Monitor</title>
+  <?php require __DIR__ . '/includes/theme_head.php'; ?>
   <link rel="stylesheet" href="assets/style.css">
   <style>
     /* ---- Page-specific overrides ---- */
@@ -159,13 +160,6 @@ $canControl = !empty($user['permissions']['bridge_control']);
     /* ---- Confirm modal override ---- */
     .modal-body p { color: var(--text-primary); line-height: 1.6; }
   </style>
-<script>
-  // Apply saved theme before first paint to avoid flash
-  (function() {
-    var t = localStorage.getItem('xpmon-theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', t);
-  })();
-</script>
 </head>
 <body>
 
@@ -179,6 +173,7 @@ $canControl = !empty($user['permissions']['bridge_control']);
   </div>
   <div class="topbar-right">
     <span class="topbar-user"><?= htmlspecialchars($user['username']) ?></span>
+    <button class="btn btn-sm btn-secondary" id="btnTheme" title="Toggle light/dark theme">🌙</button>
     <a href="logout.php" class="btn btn-sm btn-secondary">Logout</a>
     <div class="service-status" id="serviceStatus">
       <span class="service-dot"></span>
@@ -375,5 +370,6 @@ function toast(type, message, duration = 4000) {
 // ---- Boot ----
 startPolling();
 </script>
+<script src="assets/theme.js"></script>
 </body>
 </html>

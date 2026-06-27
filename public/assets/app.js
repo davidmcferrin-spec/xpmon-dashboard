@@ -1204,38 +1204,15 @@ function initSearch() {
 
 (function initTheme() {
   const saved = pref('theme', localStorage.getItem('xpmon-theme') || 'dark');
-  document.documentElement.setAttribute('data-theme', saved);
-  localStorage.setItem('xpmon-theme', saved);
-  updateThemeButton(saved);
+  xpmonApplyTheme(saved);
 })();
 
 async function saveThemePreference(theme) {
-  localStorage.setItem('xpmon-theme', theme);
-  try {
-    await fetch('api/profile.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_prefs', theme }),
-    });
-  } catch (e) { /* localStorage fallback */ }
+  await xpmonSaveThemePreference(theme);
 }
 
 function updateThemeButton(theme) {
-  const btn = document.getElementById('btnTheme');
-  if (!btn) return;
-  btn.textContent = theme === 'dark' ? '☀' : '🌙';
-  btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
-}
-
-const btnTheme = document.getElementById('btnTheme');
-if (btnTheme) {
-  btnTheme.addEventListener('click', () => {
-    const current = document.documentElement.getAttribute('data-theme') || 'dark';
-    const next    = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    updateThemeButton(next);
-    saveThemePreference(next);
-  });
+  xpmonUpdateThemeButton(theme);
 }
 
 // ---------------------------------------------------------------------------
@@ -1330,9 +1307,7 @@ document.getElementById('btnSaveProfile')?.addEventListener('click', async () =>
       else Object.assign(XPMON_USER.prefs, payload);
       if (d.forced_prefs) XPMON_USER.forced_prefs = d.forced_prefs;
       if (payload.theme) {
-        document.documentElement.setAttribute('data-theme', payload.theme);
-        localStorage.setItem('xpmon-theme', payload.theme);
-        updateThemeButton(payload.theme);
+        xpmonApplyTheme(payload.theme);
       }
       renderAll();
       for (const h of hosts.values()) evaluateAlerts(h, h);

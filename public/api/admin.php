@@ -18,6 +18,7 @@ if ($method === 'GET') {
         'ok' => true,
         'roles' => DEFAULT_ROLES,
         'permissions' => PERMISSIONS,
+        'permission_meta' => PERMISSION_META,
         'ldap' => $data['ldap'],
         'global' => $data['global'],
         'users' => $users,

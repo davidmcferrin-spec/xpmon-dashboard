@@ -1003,6 +1003,26 @@ html, body {
 }
 
 /* ---- Admin permission overrides ---- */
+.perm-override-header,
+.perm-override-row {
+  display: grid;
+  grid-template-columns: 1fr auto 48px;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.perm-override-header {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
 .perm-override-grid {
   display: flex;
   flex-direction: column;
@@ -1013,10 +1033,6 @@ html, body {
 }
 
 .perm-override-row {
-  display: grid;
-  grid-template-columns: 1fr auto 48px;
-  gap: 10px;
-  align-items: center;
   font-size: 13px;
 }
 

@@ -10,6 +10,7 @@ $user = session_user_payload_full();
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin — XPression Monitor</title>
+  <?php require __DIR__ . '/includes/theme_head.php'; ?>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -23,6 +24,7 @@ $user = session_user_payload_full();
   </div>
   <div class="topbar-right">
     <span class="topbar-user"><?= htmlspecialchars($user['username']) ?></span>
+    <button class="btn btn-sm btn-secondary" id="btnTheme" title="Toggle light/dark theme">🌙</button>
     <a href="logout.php" class="btn btn-sm btn-secondary">Logout</a>
   </div>
 </header>
@@ -200,7 +202,12 @@ $user = session_user_payload_full();
       <p class="hint">Hover a role name for a summary of what it allows.</p>
       <div id="userRolesCheckboxes" class="checkbox-grid"></div>
       <div class="edit-section-title">Permission overrides</div>
-      <p class="hint">Leave as "Role default" unless this user needs an exception. Effective column shows the net result from roles plus overrides.</p>
+      <p class="hint"><strong>Role default</strong> uses the selected roles. <strong>Grant</strong> forces allow; <strong>Deny</strong> forces block — even when roles disagree. Hover each permission for details.</p>
+      <div class="perm-override-header">
+        <span>Permission</span>
+        <span>Override</span>
+        <span title="Net result from selected roles plus overrides">Effective</span>
+      </div>
       <div id="userPermOverrides" class="perm-override-grid"></div>
     </div>
     <div class="modal-footer">
@@ -217,17 +224,6 @@ $user = session_user_payload_full();
 'use strict';
 
 let adminData = null;
-const PERM_LABELS = {
-  dashboard: 'Dashboard',
-  xcl_export: 'XCL Export',
-  bridge_view: 'Bridge — View Log',
-  bridge_control: 'Bridge — Start/Stop/Restart',
-  manage_hosts: 'Manage Hosts',
-  view_host_commands: 'View Host Commands',
-  execute_service_commands: 'Execute Start/Stop Services',
-  execute_reboot: 'Execute Reboot',
-  manage_users: 'Manage Users',
-};
 
 async function apiPost(action, payload = {}) {
   const r = await fetch('api/admin.php', {
@@ -360,15 +356,17 @@ function renderPermOverrides(user) {
     const val = overrides[perm];
     const mode = val === undefined ? 'inherit' : (val ? 'grant' : 'deny');
     const eff = effective[perm] ? 'Yes' : 'No';
-    const label = PERM_LABELS[perm] || perm;
+    const meta = (adminData.permission_meta && adminData.permission_meta[perm]) || {};
+    const label = meta.label || perm;
+    const tip = meta.description || label;
     return `<div class="perm-override-row">
-      <span class="perm-override-name" title="${esc(perm)}">${esc(label)}</span>
-      <select class="perm-override-select" data-perm="${esc(perm)}">
+      <span class="perm-override-name" title="${esc(tip)}">${esc(label)}</span>
+      <select class="perm-override-select" data-perm="${esc(perm)}" title="${esc(tip)}">
         <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>Role default</option>
         <option value="grant" ${mode === 'grant' ? 'selected' : ''}>Grant</option>
         <option value="deny" ${mode === 'deny' ? 'selected' : ''}>Deny</option>
       </select>
-      <span class="perm-override-effective ${effective[perm] ? 'perm-yes' : 'perm-no'}">${eff}</span>
+      <span class="perm-override-effective ${effective[perm] ? 'perm-yes' : 'perm-no'}" title="Effective: ${eff}">${eff}</span>
     </div>`;
   }).join('');
 
@@ -537,5 +535,6 @@ function toast(type, msg) {
 
 loadAdmin();
 </script>
+<script src="assets/theme.js"></script>
 </body>
 </html>

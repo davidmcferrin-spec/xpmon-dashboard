@@ -22,15 +22,8 @@ $isKiosk = !empty($user['is_kiosk']);
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>XPression Monitor</title>
+  <?php require __DIR__ . '/includes/theme_head.php'; ?>
   <link rel="stylesheet" href="assets/style.css">
-  <script>
-    (function() {
-      var u = <?= json_encode($user, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
-      window.XPMON_USER = u;
-      var theme = (u.prefs && u.prefs.theme) || localStorage.getItem('xpmon-theme') || 'dark';
-      document.documentElement.setAttribute('data-theme', theme);
-    })();
-  </script>
 </head>
 <body class="<?= $isKiosk ? 'kiosk-mode' : '' ?>">
 
@@ -315,6 +308,7 @@ $isKiosk = !empty($user['is_kiosk']);
   window.XPMON_WS_URL = <?= json_encode($ws_url) ?>;
   window.XPMON_USER = <?= json_encode($user, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
 </script>
+<script src="assets/theme.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

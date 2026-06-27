@@ -20,6 +20,45 @@ const PERMISSIONS = [
     'manage_users',
 ];
 
+const PERMISSION_META = [
+    'dashboard' => [
+        'label' => 'Dashboard',
+        'description' => 'Sign in and view the main XPression Monitor host dashboard.',
+    ],
+    'xcl_export' => [
+        'label' => 'XCL Export',
+        'description' => 'Download the host list as StatusClientList.xcl for the native Status Client.',
+    ],
+    'bridge_view' => [
+        'label' => 'Bridge — View Log',
+        'description' => 'Open Bridge Admin and read xpmon-bridge service logs.',
+    ],
+    'bridge_control' => [
+        'label' => 'Bridge — Start/Stop/Restart',
+        'description' => 'Start, stop, and restart the xpmon-bridge systemd service from Bridge Admin.',
+    ],
+    'manage_hosts' => [
+        'label' => 'Manage Hosts',
+        'description' => 'Add, edit, remove, and import hosts on the dashboard.',
+    ],
+    'view_host_commands' => [
+        'label' => 'View Host Commands',
+        'description' => 'Show Start All, Stop All, and Reboot buttons on host cards (buttons may still be disabled).',
+    ],
+    'execute_service_commands' => [
+        'label' => 'Execute Start/Stop Services',
+        'description' => 'Run Start All and Stop All on hosts (does not include reboot).',
+    ],
+    'execute_reboot' => [
+        'label' => 'Execute Reboot',
+        'description' => 'Send reboot commands to Windows hosts from the dashboard.',
+    ],
+    'manage_users' => [
+        'label' => 'Manage Users',
+        'description' => 'Access Admin to manage users, LDAP, session settings, and global preferences.',
+    ],
+];
+
 const DEFAULT_ROLES = [
     'admin' => [
         'label' => 'Administrator',
