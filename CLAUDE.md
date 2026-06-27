@@ -64,7 +64,8 @@ total_len = payload_len + 8
 
 - Server pushes `winupdate` unsolicited
 - Bridge sends `getdoorconfig` every 20s as keepalive (server has ~30s idle timeout)
-- Bridge sends `diskstatus` every 60s for disk refresh
+- Bridge sends `getinventory` every 20s for app status refresh
+- Bridge sends `diskstatus` every 5 min for disk refresh
 
 ### Control packets (client → server)
 
@@ -167,7 +168,8 @@ Global prefs in `data/auth.json`: `force_*` (override all users), `default_*` (w
 OFFLINE_GRACE = 45           # seconds per watchdog interval
 OFFLINE_MISS_LIMIT = 2       # misses before forcing reconnect
 KEEPALIVE_INTERVAL = 20      # seconds between keepalive pings
-DISK_POLL_INTERVAL = 60      # seconds between disk refreshes
+INVENTORY_POLL_INTERVAL = 20 # seconds between app status refreshes
+DISK_POLL_INTERVAL = 300     # seconds between disk refreshes (5 min)
 APP_UPGRADE_GRACE = 90       # suppress critical-app alerts after version change
 ```
 
