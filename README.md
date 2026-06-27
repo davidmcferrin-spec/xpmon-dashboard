@@ -19,7 +19,7 @@ Web-based status dashboard for Ross Video XPression Monitor servers. Replaces th
 - **Light/dark theme** — toggle in topbar, saved per browser
 - **Host management** — add, edit, remove hosts; group organization; drag-and-drop XCL import
 - **Authentication** — local + LDAP (LDAPS) login, role-based access, user profiles
-- **Admin panel** — users, LDAP groups, global preference overrides
+- **Admin panel** — users, LDAP groups, per-user permission overrides, global force/default prefs
 
 ---
 
@@ -199,7 +199,9 @@ Retry logic: a host must miss `OFFLINE_MISS_LIMIT` consecutive watchdog checks (
 
 ## Theme
 
-Click ☀/🌙 in the topbar to toggle light/dark theme. Preference is saved per browser in `localStorage`.
+Click ☀/🌙 in the topbar to toggle light/dark theme. Preference is saved to your profile and `localStorage`.
+
+Admin can **force** display/alert prefs for all users (Profile fields show as locked) or set **defaults** for users who have not chosen their own.
 
 ---
 

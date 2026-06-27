@@ -981,8 +981,69 @@ html, body {
 }
 
 .modal-lg {
-  max-width: 520px;
+  max-width: 640px;
 }
+
+/* ---- Profile forced prefs ---- */
+.pref-forced {
+  opacity: 0.75;
+}
+
+.pref-lock-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: normal;
+  margin-top: 4px;
+}
+
+.checkbox-label.pref-forced .pref-lock-hint {
+  display: block;
+  width: 100%;
+}
+
+/* ---- Admin permission overrides ---- */
+.perm-override-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.perm-override-row {
+  display: grid;
+  grid-template-columns: 1fr auto 48px;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.perm-override-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perm-override-select {
+  min-width: 120px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.perm-override-effective {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.perm-override-effective.perm-yes { color: var(--green); }
+.perm-override-effective.perm-no { color: var(--text-muted); }
 
 /* ---- Kiosk mode (wall display) ---- */
 body.kiosk-mode .topbar {

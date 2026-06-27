@@ -49,6 +49,8 @@ STARTUP_STAGGER_MAX = 5.0   # max random delay before first connect (spread load
 HEALTH_LOG_INTERVAL = 300   # seconds between periodic health summaries
 TASK_SUPERVISOR_INTERVAL = 60  # seconds between dead-task checks
 WS_MAX_MESSAGE_SIZE = 1_048_576
+_MAX_FRAME_PAYLOAD = 1_048_576   # hard ceiling for TCP frame payloads (read + parse)
+_LARGE_PAYLOAD_WARN = 65_536     # log anomalies above typical XPression packet sizes
 WS_PING_INTERVAL = 30
 WS_PING_TIMEOUT = 10
 APPNAME = "xpStatusClient"
@@ -194,18 +196,16 @@ def make_login_packet() -> str:
         f'</packet>'
     )
 
-# Maximum bytes fed to the XML parser. Payloads beyond this are truncated
-# before parsing — the valid packet element always closes well under this limit.
-_XML_PARSE_CAP = 65_536
-
 def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
-    """Find and parse the XML portion of a frame payload."""
+    """Find and parse the XML portion of a frame payload.
+
+    Caller must bound `data` size (see _MAX_FRAME_PAYLOAD in _read_packet).
+    """
     idx = data.find(b'<packet')
     if idx < 0:
         return None
     try:
-        # Cap the slice to avoid large allocations on anomalous payloads
-        return ET.fromstring(data[idx:idx + _XML_PARSE_CAP].decode("utf-8", errors="replace"))
+        return ET.fromstring(data[idx:].decode("utf-8", errors="replace"))
     except ET.ParseError:
         return None
 
@@ -470,39 +470,40 @@ class XPresMonClient:
     async def _read_packet(self, timeout: float = 30) -> Optional[dict]:
         if self._reader is None:
             return None
-        try:
-            header_bytes = await asyncio.wait_for(
-                self._reader.readexactly(12), timeout=timeout
+        while True:
+            try:
+                header_bytes = await asyncio.wait_for(
+                    self._reader.readexactly(12), timeout=timeout
+                )
+            except (asyncio.IncompleteReadError, asyncio.TimeoutError):
+                return None
+
+            _total_len, payload_len, _ = FRAME_HEADER.unpack(header_bytes)
+
+            if payload_len > _MAX_FRAME_PAYLOAD or payload_len == 0:
+                raise ConnectionError(f"Implausible payload length: {payload_len}")
+            if payload_len > _LARGE_PAYLOAD_WARN:
+                log.warning(
+                    "[%s] Unusually large payload: %d bytes",
+                    self.state.display_name, payload_len
+                )
+
+            payload = await asyncio.wait_for(
+                self._reader.readexactly(payload_len), timeout=10
             )
-        except (asyncio.IncompleteReadError, asyncio.TimeoutError):
-            return None
 
-        _total_len, payload_len, _ = FRAME_HEADER.unpack(header_bytes)
+            elem = parse_xml_packet(payload)
+            if elem is None:
+                log.warning(
+                    "[%s] Unparseable payload (%d bytes) — skipping frame",
+                    self.state.display_name, len(payload)
+                )
+                continue
 
-        # Hard ceiling: anything over 1MB is never legitimate for this protocol
-        if payload_len > 1_048_576 or payload_len == 0:
-            raise ConnectionError(f"Implausible payload length: {payload_len}")
-        # Soft cap: XPression payloads are always <4KB in practice.
-        # Log a warning for anything over 64KB so anomalies are visible,
-        # but still parse it — could be a large inventory on a busy host.
-        if payload_len > 65_536:
-            log.warning(
-                "[%s] Unusually large payload: %d bytes — parsing anyway",
-                self.state.display_name, payload_len
-            )
-
-        payload = await asyncio.wait_for(
-            self._reader.readexactly(payload_len), timeout=10
-        )
-
-        elem = parse_xml_packet(payload)
-        if elem is None:
-            return None
-
-        result = dict(elem.attrib)
-        result["type"] = elem.get("type", "")
-        result["_elem"] = elem
-        return result
+            result = dict(elem.attrib)
+            result["type"] = elem.get("type", "")
+            result["_elem"] = elem
+            return result
 
     async def _send(self, xml: str):
         if self._writer is None or self._writer.is_closing():

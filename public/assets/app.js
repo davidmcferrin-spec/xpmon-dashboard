@@ -57,6 +57,20 @@ function userPrefs() {
   return XPMON_USER.prefs || {};
 }
 
+function forcedPrefs() {
+  return XPMON_USER.forced_prefs || {};
+}
+
+function applyForcedPrefControl(rowId, inputId, lockId, forcedKey) {
+  const forced = !!forcedPrefs()[forcedKey];
+  const row = document.getElementById(rowId);
+  const input = document.getElementById(inputId);
+  const lock = document.getElementById(lockId);
+  if (input) input.disabled = forced;
+  if (row) row.classList.toggle('pref-forced', forced);
+  if (lock) lock.hidden = !forced;
+}
+
 function pref(key, fallback) {
   const p = userPrefs();
   return p[key] !== undefined ? p[key] : fallback;
@@ -1240,6 +1254,10 @@ function applyPrefsToProfileForm() {
   if (door) door.checked = !!p.hide_door;
   const upd = document.getElementById('prefHideWinUpdates');
   if (upd) upd.checked = !!p.hide_win_updates;
+  applyForcedPrefControl('prefAlertModeRow', 'prefAlertMode', 'prefAlertModeLock', 'alert_mode');
+  applyForcedPrefControl('prefShowIgnoredRow', 'prefShowIgnored', 'prefShowIgnoredLock', 'show_ignored_services');
+  applyForcedPrefControl('prefHideDoorRow', 'prefHideDoor', 'prefHideDoorLock', 'hide_door');
+  applyForcedPrefControl('prefHideWinUpdatesRow', 'prefHideWinUpdates', 'prefHideWinUpdatesLock', 'hide_win_updates');
   populateAlertHostsList();
 }
 
@@ -1281,16 +1299,25 @@ document.getElementById('btnProfile')?.addEventListener('click', () => {
 
 document.getElementById('btnSaveProfile')?.addEventListener('click', async () => {
   const alertHostPrefs = collectAlertHostsFromForm();
+  const forced = forcedPrefs();
   const payload = {
     action: 'save_prefs',
     theme: document.getElementById('prefTheme')?.value,
-    alert_mode: document.getElementById('prefAlertMode')?.value,
     alert_hosts_all: alertHostPrefs.alert_hosts_all,
     alert_hosts: alertHostPrefs.alert_hosts,
-    show_ignored_services: document.getElementById('prefShowIgnored')?.checked,
-    hide_door: document.getElementById('prefHideDoor')?.checked,
-    hide_win_updates: document.getElementById('prefHideWinUpdates')?.checked,
   };
+  if (!forced.alert_mode) {
+    payload.alert_mode = document.getElementById('prefAlertMode')?.value;
+  }
+  if (!forced.show_ignored_services) {
+    payload.show_ignored_services = document.getElementById('prefShowIgnored')?.checked;
+  }
+  if (!forced.hide_door) {
+    payload.hide_door = document.getElementById('prefHideDoor')?.checked;
+  }
+  if (!forced.hide_win_updates) {
+    payload.hide_win_updates = document.getElementById('prefHideWinUpdates')?.checked;
+  }
   try {
     const r = await fetch('api/profile.php', {
       method: 'POST',
@@ -1301,6 +1328,7 @@ document.getElementById('btnSaveProfile')?.addEventListener('click', async () =>
     if (d.ok) {
       if (d.prefs) XPMON_USER.prefs = d.prefs;
       else Object.assign(XPMON_USER.prefs, payload);
+      if (d.forced_prefs) XPMON_USER.forced_prefs = d.forced_prefs;
       if (payload.theme) {
         document.documentElement.setAttribute('data-theme', payload.theme);
         localStorage.setItem('xpmon-theme', payload.theme);

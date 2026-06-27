@@ -41,6 +41,7 @@ $user = session_user_payload_full();
             <th>Username</th>
             <th>Type</th>
             <th>Roles</th>
+            <th>Overrides</th>
             <th>Enabled</th>
             <th></th>
           </tr>
@@ -101,8 +102,9 @@ $user = session_user_payload_full();
 
   <section class="admin-section">
     <h2>Global Preferences</h2>
-    <p class="hint">Force values override individual user settings. Leave force fields empty to allow user choice.</p>
+    <p class="hint">Force values override individual user settings. Leave force fields empty to allow user choice. Defaults apply when no force is set and the user has not chosen their own preference.</p>
     <form id="globalForm" class="admin-form">
+      <div class="edit-section-title">Force (override all users)</div>
       <div class="admin-form-grid">
         <label>Force alert mode
           <select id="forceAlertMode">
@@ -132,6 +134,35 @@ $user = session_user_payload_full();
             <option value="">— user choice —</option>
             <option value="1">Hide</option>
             <option value="0">Show</option>
+          </select>
+        </label>
+      </div>
+      <div class="edit-section-title">Defaults (new users / unset prefs)</div>
+      <div class="admin-form-grid">
+        <label>Default alert mode
+          <select id="defaultAlertMode">
+            <option value="none">None</option>
+            <option value="flash">Flash only</option>
+            <option value="horn">Horn only</option>
+            <option value="both">Flash + Horn</option>
+          </select>
+        </label>
+        <label>Default show ignored services
+          <select id="defaultShowIgnored">
+            <option value="1">Show</option>
+            <option value="0">Hide</option>
+          </select>
+        </label>
+        <label>Default hide door indicator
+          <select id="defaultHideDoor">
+            <option value="0">Show</option>
+            <option value="1">Hide</option>
+          </select>
+        </label>
+        <label>Default hide Windows Updates
+          <select id="defaultHideWinUpdates">
+            <option value="0">Show</option>
+            <option value="1">Hide</option>
           </select>
         </label>
       </div>
@@ -168,6 +199,9 @@ $user = session_user_payload_full();
       <div class="edit-section-title">Roles</div>
       <p class="hint">Hover a role name for a summary of what it allows.</p>
       <div id="userRolesCheckboxes" class="checkbox-grid"></div>
+      <div class="edit-section-title">Permission overrides</div>
+      <p class="hint">Leave as "Role default" unless this user needs an exception. Effective column shows the net result from roles plus overrides.</p>
+      <div id="userPermOverrides" class="perm-override-grid"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" id="btnDeleteUser" style="margin-right:auto">Delete User</button>
@@ -217,15 +251,21 @@ async function loadAdmin() {
 
 function renderUsers() {
   const tbody = document.getElementById('usersBody');
-  tbody.innerHTML = adminData.users.map(u => `
+  tbody.innerHTML = adminData.users.map(u => {
+    const overrideCount = Object.keys(u.permission_overrides || {}).length;
+    const overrideLabel = overrideCount
+      ? `${overrideCount} override${overrideCount === 1 ? '' : 's'}`
+      : '—';
+    return `
     <tr>
       <td>${esc(u.username)}</td>
       <td>${esc(u.type || 'local')}</td>
       <td>${(u.roles || []).map(esc).join(', ')}</td>
+      <td>${esc(overrideLabel)}</td>
       <td>${u.enabled ? 'Yes' : 'No'}</td>
       <td><button class="btn btn-sm btn-secondary" data-edit-user="${esc(u.id)}">Edit</button></td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
   tbody.querySelectorAll('[data-edit-user]').forEach(btn => {
     btn.addEventListener('click', () => openUserModal(btn.dataset.editUser));
   });
@@ -272,6 +312,10 @@ function renderGlobal() {
   document.getElementById('forceShowIgnored').value = g.force_show_ignored_services === null ? '' : (g.force_show_ignored_services ? '1' : '0');
   document.getElementById('forceHideDoor').value = g.force_hide_door === null ? '' : (g.force_hide_door ? '1' : '0');
   document.getElementById('forceHideWinUpdates').value = g.force_hide_win_updates === null ? '' : (g.force_hide_win_updates ? '1' : '0');
+  document.getElementById('defaultAlertMode').value = g.default_alert_mode ?? 'both';
+  document.getElementById('defaultShowIgnored').value = (g.default_show_ignored_services !== false) ? '1' : '0';
+  document.getElementById('defaultHideDoor').value = g.default_hide_door ? '1' : '0';
+  document.getElementById('defaultHideWinUpdates').value = g.default_hide_win_updates ? '1' : '0';
 }
 
 function populateRoleSelects() {
@@ -279,6 +323,70 @@ function populateRoleSelects() {
   sel.innerHTML = Object.entries(adminData.roles).map(([id, r]) =>
     `<option value="${esc(id)}" title="${esc(r.description || '')}" selected>${esc(r.label)}</option>`
   ).join('');
+}
+
+function rolePermissions(roleIds) {
+  const merged = {};
+  for (const perm of adminData.permissions) merged[perm] = false;
+  for (const rid of roleIds) {
+    const role = adminData.roles[rid];
+    if (!role) continue;
+    for (const [perm, val] of Object.entries(role.permissions || {})) {
+      if (val) merged[perm] = true;
+    }
+  }
+  return merged;
+}
+
+function effectivePermissionsForUser(roles, overrides) {
+  const merged = rolePermissions(roles);
+  for (const [perm, val] of Object.entries(overrides || {})) {
+    if (adminData.permissions.includes(perm)) merged[perm] = !!val;
+  }
+  if (overrides?.execute_host_commands) {
+    merged.execute_service_commands = true;
+    merged.execute_reboot = true;
+  }
+  return merged;
+}
+
+function renderPermOverrides(user) {
+  const box = document.getElementById('userPermOverrides');
+  const roles = [...document.querySelectorAll('input[name=userRole]:checked')].map(c => c.value);
+  const overrides = user.permission_overrides || {};
+  const effective = effectivePermissionsForUser(roles, overrides);
+
+  box.innerHTML = adminData.permissions.map(perm => {
+    const val = overrides[perm];
+    const mode = val === undefined ? 'inherit' : (val ? 'grant' : 'deny');
+    const eff = effective[perm] ? 'Yes' : 'No';
+    const label = PERM_LABELS[perm] || perm;
+    return `<div class="perm-override-row">
+      <span class="perm-override-name" title="${esc(perm)}">${esc(label)}</span>
+      <select class="perm-override-select" data-perm="${esc(perm)}">
+        <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>Role default</option>
+        <option value="grant" ${mode === 'grant' ? 'selected' : ''}>Grant</option>
+        <option value="deny" ${mode === 'deny' ? 'selected' : ''}>Deny</option>
+      </select>
+      <span class="perm-override-effective ${effective[perm] ? 'perm-yes' : 'perm-no'}">${eff}</span>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.perm-override-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      renderPermOverrides({ permission_overrides: collectPermOverridesFromForm() });
+    });
+  });
+}
+
+function collectPermOverridesFromForm() {
+  const overrides = {};
+  document.querySelectorAll('.perm-override-select').forEach(sel => {
+    const perm = sel.dataset.perm;
+    if (sel.value === 'grant') overrides[perm] = true;
+    else if (sel.value === 'deny') overrides[perm] = false;
+  });
+  return overrides;
 }
 
 function roleCheckboxHtml(id, role, checked) {
@@ -308,6 +416,13 @@ function openUserModal(userId) {
   rolesBox.innerHTML = Object.entries(adminData.roles).map(([id, r]) =>
     roleCheckboxHtml(id, r, (user.roles || []).includes(id))
   ).join('');
+  rolesBox.querySelectorAll('input[name=userRole]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      renderPermOverrides({ permission_overrides: collectPermOverridesFromForm() });
+    });
+  });
+
+  renderPermOverrides(user);
 
   document.getElementById('modalUser').removeAttribute('hidden');
 }
@@ -329,6 +444,7 @@ document.getElementById('btnSaveUser').addEventListener('click', async () => {
     password: document.getElementById('userPassword').value,
     roles,
     enabled: document.getElementById('userEnabled').checked,
+    permission_overrides: collectPermOverridesFromForm(),
   };
   const d = await apiPost('save_user', payload);
   if (d.ok) {
@@ -393,6 +509,10 @@ document.getElementById('globalForm').addEventListener('submit', async (e) => {
     force_show_ignored_services: parseForce('forceShowIgnored'),
     force_hide_door: parseForce('forceHideDoor'),
     force_hide_win_updates: parseForce('forceHideWinUpdates'),
+    default_alert_mode: document.getElementById('defaultAlertMode').value,
+    default_show_ignored_services: document.getElementById('defaultShowIgnored').value === '1',
+    default_hide_door: document.getElementById('defaultHideDoor').value === '1',
+    default_hide_win_updates: document.getElementById('defaultHideWinUpdates').value === '1',
   });
   if (d.ok) toast('success', 'Global settings saved');
   else toast('error', d.error);

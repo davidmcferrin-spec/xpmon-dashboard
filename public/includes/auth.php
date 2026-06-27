@@ -768,6 +768,7 @@ function session_user_payload_full(): ?array
     }
     $perms = effective_permissions($user);
     $prefs = effective_prefs($user, $data['global']);
+    $global = $data['global'];
     return [
         'id' => $user['id'],
         'username' => $user['username'],
@@ -775,6 +776,12 @@ function session_user_payload_full(): ?array
         'roles' => $user['roles'] ?? [],
         'permissions' => $perms,
         'prefs' => $prefs,
+        'forced_prefs' => [
+            'alert_mode' => $global['force_alert_mode'] !== null,
+            'show_ignored_services' => $global['force_show_ignored_services'] !== null,
+            'hide_door' => $global['force_hide_door'] !== null,
+            'hide_win_updates' => $global['force_hide_win_updates'] !== null,
+        ],
         'must_change_password' => !empty($user['must_change_password']),
         'is_kiosk' => is_kiosk_session(),
     ];

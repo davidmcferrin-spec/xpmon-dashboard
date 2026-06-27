@@ -2,12 +2,10 @@
 ## TO DO ITEMS
 ##
 
-## WebSocket token auth — PHP issues short-lived HMAC token; bridge validates
-##     on WS connect and gates host_command, add_host, etc.
+# COMPLETED ──────────────────────────────────────────────────────────────────
 
-## Admin UI gaps — permission overrides UI, forced-pref indicators in profile
-
-## COMPLETED ──────────────────────────────────────────────────────────────────
+## [DONE] Admin UI gaps — permission overrides UI, default global prefs,
+##     forced-pref lock indicators in profile modal
 
 ## [DONE] Profile-based alerts — per-user alert_hosts, alert_mode, optional
 ##     user_critical_apps; evaluateAlerts in app.js uses session prefs

@@ -101,6 +101,8 @@ user_critical_apps: dict[str, list[str]]     # per-user app alert filters by hos
 show_ignored_services, hide_door, hide_win_updates
 ```
 
+Global prefs in `data/auth.json`: `force_*` (override all users), `default_*` (when user has not set a pref). Session payload includes `forced_prefs` booleans so the profile modal can lock forced fields.
+
 ### config.json schema
 
 ```json
@@ -186,11 +188,11 @@ www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active xpmon-bridge
 ## Open TODO items
 
 - **WebSocket token auth** — PHP issues HMAC token; bridge validates on connect (control plane currently unauthenticated)
-- **Admin UI gaps** — permission overrides UI, forced-pref indicators in profile
 
 ## Completed items
 
 - Auth (local + LDAP, roles, admin UI, profile prefs)
+- Admin UI: permission overrides per user, default global prefs, forced-pref lock in profile modal
 - Profile-based alerts (`alert_hosts`, `user_critical_apps`, `alert_mode`)
 - XCL export/import with hostname fidelity
 - Bridge 24/7 robustness (watchdog, task supervisor, diff broadcast, config lock)

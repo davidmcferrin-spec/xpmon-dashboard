@@ -243,28 +243,32 @@ $isKiosk = !empty($user['is_kiosk']);
         </select>
       </label>
       <div class="edit-section-title">Alerts</div>
-      <label>Alert mode
+      <label id="prefAlertModeRow">Alert mode
         <select id="prefAlertMode">
           <option value="both">Flash + Horn</option>
           <option value="flash">Flash only</option>
           <option value="horn">Horn only</option>
           <option value="none">None</option>
         </select>
+        <span class="pref-lock-hint" id="prefAlertModeLock" hidden>Set by administrator</span>
       </label>
       <p class="hint">Check the hosts you want alerts for. All checked monitors every host; uncheck hosts to limit alerts to a subset.</p>
       <div class="alert-host-list" id="prefAlertHostsList"></div>
       <div class="edit-section-title">Dashboard</div>
-      <label class="checkbox-label">
+      <label class="checkbox-label" id="prefShowIgnoredRow">
         <input type="checkbox" id="prefShowIgnored">
         <span>Show ignored services</span>
+        <span class="pref-lock-hint" id="prefShowIgnoredLock" hidden>Set by administrator</span>
       </label>
-      <label class="checkbox-label">
+      <label class="checkbox-label" id="prefHideDoorRow">
         <input type="checkbox" id="prefHideDoor">
         <span>Hide door color indicator</span>
+        <span class="pref-lock-hint" id="prefHideDoorLock" hidden>Set by administrator</span>
       </label>
-      <label class="checkbox-label">
+      <label class="checkbox-label" id="prefHideWinUpdatesRow">
         <input type="checkbox" id="prefHideWinUpdates">
         <span>Hide Windows Update badge</span>
+        <span class="pref-lock-hint" id="prefHideWinUpdatesLock" hidden>Set by administrator</span>
       </label>
       <?php if (($user['type'] ?? 'local') === 'local'): ?>
       <div class="edit-section-title">Password</div>

@@ -99,7 +99,17 @@ if ($action === 'save_prefs') {
 
     $data['users'][$userIdx]['prefs'] = array_merge(DEFAULT_PREFS, $prefs);
     save_auth_data($data);
-    json_response(['ok' => true, 'prefs' => effective_prefs($data['users'][$userIdx], $data['global'])]);
+    $global = $data['global'];
+    json_response([
+        'ok' => true,
+        'prefs' => effective_prefs($data['users'][$userIdx], $global),
+        'forced_prefs' => [
+            'alert_mode' => $global['force_alert_mode'] !== null,
+            'show_ignored_services' => $global['force_show_ignored_services'] !== null,
+            'hide_door' => $global['force_hide_door'] !== null,
+            'hide_win_updates' => $global['force_hide_win_updates'] !== null,
+        ],
+    ]);
 }
 
 json_response(['ok' => false, 'error' => 'Unknown action'], 400);
