@@ -155,9 +155,18 @@ function load_auth_data(): array
     return $data;
 }
 
-function save_auth_data(array $data): bool
+function ensure_auth_dir(): void
 {
-    ensure_auth_data();
+    $dir = auth_data_dir();
+    if (!is_dir($dir)) {
+        mkdir($dir, 0750, true);
+    }
+}
+
+/** Atomic write — does not trigger seeding. */
+function write_auth_data(array $data): bool
+{
+    ensure_auth_dir();
     $data['ldap'] = array_merge(DEFAULT_LDAP, $data['ldap'] ?? []);
     $data['global'] = array_merge(DEFAULT_GLOBAL, $data['global'] ?? []);
     $data['users'] = $data['users'] ?? [];
@@ -172,12 +181,14 @@ function save_auth_data(array $data): bool
     return rename($tmp, AUTH_DATA_FILE);
 }
 
+function save_auth_data(array $data): bool
+{
+    return write_auth_data($data);
+}
+
 function ensure_auth_data(): void
 {
-    $dir = auth_data_dir();
-    if (!is_dir($dir)) {
-        mkdir($dir, 0750, true);
-    }
+    ensure_auth_dir();
     if (!file_exists(AUTH_DATA_FILE)) {
         seed_auth_data();
     }
@@ -195,16 +206,14 @@ function seed_auth_data(): void
                 'type' => 'local',
                 'password_hash' => password_hash('admin', PASSWORD_DEFAULT),
                 'roles' => ['admin'],
-                'permission_overrides' => new stdClass(),
+                'permission_overrides' => [],
                 'prefs' => DEFAULT_PREFS,
                 'enabled' => true,
                 'must_change_password' => true,
             ],
         ],
     ];
-    // JSON encode stdClass as {}
-    $data['users'][0]['permission_overrides'] = [];
-    save_auth_data($data);
+    write_auth_data($data);
 }
 
 function uuid4(): string
