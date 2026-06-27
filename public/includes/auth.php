@@ -540,32 +540,39 @@ function ldap_fetch_member_of(mixed $conn, string $loginUsername, string $bindDn
     if ($dn) {
         $groups = ldap_read_member_of_at_dn($conn, $dn);
         if ($groups) {
-            return $groups;
+            return ['ok' => true, 'member_of' => $groups];
         }
     }
 
     $groups = ldap_read_member_of_at_dn($conn, $bindDn);
     if ($groups) {
-        return $groups;
+        return ['ok' => true, 'member_of' => $groups];
     }
 
     $base = ldap_infer_base_dn($ldap);
     if ($base === '') {
-        return [];
+        return [
+            'ok' => false,
+            'error' => 'LDAP base DN not configured — set base_dn or use a bind_template with @domain.com',
+        ];
     }
 
     $safe = ldap_escape($loginUsername, '', LDAP_ESCAPE_FILTER);
     $result = @ldap_search($conn, $base, "(sAMAccountName=$safe)", ['memberOf'], 0, 1);
     if (!$result) {
-        return [];
+        $err = @ldap_error($conn) ?: '';
+        return [
+            'ok' => false,
+            'error' => 'LDAP group lookup failed' . ($err !== '' ? ' (' . $err . ')' : ''),
+        ];
     }
     $entries = ldap_get_entries($conn, $result);
-    if ($entries['count'] < 1) {
-        return [];
+    if (!is_array($entries) || ($entries['count'] ?? 0) < 1) {
+        return ['ok' => false, 'error' => 'LDAP user not found for group lookup'];
     }
     $memberOf = $entries[0]['memberof'] ?? [];
     unset($memberOf['count']);
-    return array_values($memberOf);
+    return ['ok' => true, 'member_of' => array_values($memberOf)];
 }
 
 function ldap_bind_user(array $ldap, string $username, string $password): array
@@ -581,7 +588,7 @@ function ldap_bind_user(array $ldap, string $username, string $password): array
 
     $bindDn = ldap_make_bind_dn($username, $ldap);
     if (!@ldap_bind($conn, $bindDn, $password)) {
-        $err = ldap_error($conn);
+        $err = @ldap_error($conn) ?: '';
         ldap_unbind($conn);
         if (stripos($err, "Can't contact") !== false || stripos($err, 'connect') !== false) {
             return ['ok' => false, 'error' => 'LDAP server unreachable (' . $err . ')'];
@@ -589,9 +596,12 @@ function ldap_bind_user(array $ldap, string $username, string $password): array
         return ['ok' => false, 'error' => 'Invalid username or password'];
     }
 
-    $groups = ldap_fetch_member_of($conn, $username, $bindDn, $ldap);
+    $memberResult = ldap_fetch_member_of($conn, $username, $bindDn, $ldap);
     ldap_unbind($conn);
-    return ['ok' => true, 'bind_dn' => $bindDn, 'member_of' => $groups];
+    if (empty($memberResult['ok'])) {
+        return ['ok' => false, 'error' => $memberResult['error'] ?? 'LDAP group lookup failed'];
+    }
+    return ['ok' => true, 'bind_dn' => $bindDn, 'member_of' => $memberResult['member_of']];
 }
 
 function ldap_group_matches(string $memberOfDn, string $groupName): bool

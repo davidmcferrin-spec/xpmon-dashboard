@@ -515,16 +515,18 @@ class XPresMonClient:
         changed = (
             self.state.version != new_version
             or self.state.build != new_build
-            or self.state.hostname != new_hostname
-            or self.state.reported_hostname != new_hostname
+            or self.state.reported_hostname != new_hostname.lower()
             or self.state.uid != new_uid
             or self.state.door_detected != new_door
         )
 
         self.state.version = new_version
         self.state.build = new_build
-        self.state.hostname = new_hostname
-        self.state.reported_hostname = new_hostname
+        # hostname in HostState = the IP/address we connected to (for XCL <hostname> field)
+        # reported_hostname = what the server announces as its own name (for XCL <reportedhostname>)
+        # The serverinfo <hostname> element IS the reported hostname.
+        # We keep self.state.hostname as the connection address (already set at init from config).
+        self.state.reported_hostname = new_hostname.lower()
         self.state.uid = new_uid
         self.state.door_detected = new_door
         return changed
@@ -685,8 +687,10 @@ class XPresMonBridge:
                     port         = h.get("port", 9875),
                     group        = h.get("group", "Ungrouped"),
                     critical_apps= h.get("critical_apps", []),
-                    canvas_enabled= h.get("canvas_enabled", False),
-                    canvas_port   = h.get("canvas_port", 9056),
+                    canvas_enabled    = h.get("canvas_enabled", False),
+                    canvas_port       = h.get("canvas_port", 9056),
+                    hostname          = h.get("hostname", h.get("ip", "")),
+                    reported_hostname = h.get("reported_hostname", ""),
                 )
                 self.hosts[state.id] = state
             log.info("Loaded %d hosts from config", len(self.hosts))
@@ -748,8 +752,10 @@ class XPresMonBridge:
                     "port":         h.port,
                     "group":        h.group,
                     "critical_apps":  h.critical_apps,
-                    "canvas_enabled": h.canvas_enabled,
-                    "canvas_port":    h.canvas_port,
+                    "canvas_enabled":    h.canvas_enabled,
+                    "canvas_port":       h.canvas_port,
+                    "hostname":          h.hostname,
+                    "reported_hostname": h.reported_hostname,
                 }
                 for h in self.hosts.values()
             ]
