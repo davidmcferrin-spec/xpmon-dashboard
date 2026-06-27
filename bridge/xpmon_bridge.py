@@ -196,6 +196,8 @@ def make_login_packet() -> str:
         f'</packet>'
     )
 
+_XML_PARSE_CAP = 65_536
+
 def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     """Find and parse the XML portion of a frame payload.
 
@@ -205,7 +207,7 @@ def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     if idx < 0:
         return None
     try:
-        return ET.fromstring(data[idx:].decode("utf-8", errors="replace"))
+        return ET.fromstring(data[idx:idx + _XML_PARSE_CAP].decode("utf-8", errors="replace"))
     except ET.ParseError:
         return None
 

@@ -32,6 +32,10 @@ $isKiosk = !empty($user['is_kiosk']);
     <span class="topbar-logo">XP<span class="accent">MON</span></span>
     <span class="topbar-subtitle"><?= $isKiosk ? 'Kiosk — XPression Monitor' : 'XPression Monitor Dashboard' ?></span>
   </div>
+  <div class="topbar-search">
+    <input type="search" id="searchInput" class="search-input"
+           placeholder="Filter hosts…" autocomplete="off" spellcheck="false">
+  </div>
   <div class="topbar-right">
     <span class="ws-status" id="wsStatus" title="WebSocket bridge connection">
       <span class="ws-dot"></span>
