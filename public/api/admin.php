@@ -43,6 +43,7 @@ switch ($action) {
         $ldap['host'] = trim($body['host'] ?? $ldap['host']);
         $ldap['port'] = (int)($body['port'] ?? $ldap['port']);
         $ldap['bind_template'] = trim($body['bind_template'] ?? $ldap['bind_template']);
+        $ldap['base_dn'] = trim($body['base_dn'] ?? $ldap['base_dn'] ?? '');
         $ldap['ignore_cert'] = !empty($body['ignore_cert']);
         $data['ldap'] = $ldap;
         save_auth_data($data);

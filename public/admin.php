@@ -63,8 +63,11 @@ $user = session_user_payload_full();
       <label>Port
         <input type="number" id="ldapPort" value="636">
       </label>
-      <label>Bind template <span class="hint-inline">use {username}</span>
-        <input type="text" id="ldapBindTemplate" placeholder="{username}@example.com">
+      <label>Bind template <span class="hint-inline">use {username} — e.g. {username}@nexstar.tv</span>
+        <input type="text" id="ldapBindTemplate" placeholder="{username}@nexstar.tv">
+      </label>
+      <label>Base DN <span class="hint-inline">optional — auto-derived from bind template if empty</span>
+        <input type="text" id="ldapBaseDn" placeholder="DC=nexstar,DC=tv">
       </label>
       <label class="checkbox-label">
         <input type="checkbox" id="ldapIgnoreCert" checked>
@@ -232,6 +235,7 @@ function renderLdap() {
   document.getElementById('ldapHost').value = l.host || '';
   document.getElementById('ldapPort').value = l.port || 636;
   document.getElementById('ldapBindTemplate').value = l.bind_template || '';
+  document.getElementById('ldapBaseDn').value = l.base_dn || '';
   document.getElementById('ldapIgnoreCert').checked = l.ignore_cert !== false;
 }
 
@@ -345,6 +349,7 @@ document.getElementById('ldapForm').addEventListener('submit', async (e) => {
     host: document.getElementById('ldapHost').value.trim(),
     port: parseInt(document.getElementById('ldapPort').value) || 636,
     bind_template: document.getElementById('ldapBindTemplate').value.trim(),
+    base_dn: document.getElementById('ldapBaseDn').value.trim(),
     ignore_cert: document.getElementById('ldapIgnoreCert').checked,
   });
   if (d.ok) toast('success', 'LDAP settings saved');

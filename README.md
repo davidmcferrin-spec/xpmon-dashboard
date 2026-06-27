@@ -144,7 +144,7 @@ Users can hold multiple roles (permissions are combined). Configure users and LD
 
 **Kiosk setup:** Create a local user (e.g. `wall-display`), assign only the **kiosk** role, sign in once on the wall PC — the dashboard uses a minimal topbar with no logout/admin controls.
 
-LDAP uses LDAPS with user bind (`{username}` in bind template). AD group names can be mapped to roles for automatic access without pre-creating accounts.
+LDAP uses LDAPS with user bind. Type only your sAMAccountName at login; set bind template to `{username}@your.domain` (e.g. `{username}@nexstar.tv`). TLS cert ignore is applied before connect. AD group names can be mapped to roles for automatic access without pre-creating accounts.
 
 **Note:** WebSocket (`:8765`) is not authenticated — UI and PHP endpoints enforce access. Restrict port 8765 at the firewall to trusted subnets.
 

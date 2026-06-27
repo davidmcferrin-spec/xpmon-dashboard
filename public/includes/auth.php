@@ -128,6 +128,7 @@ const DEFAULT_LDAP = [
     'host' => '',
     'port' => 636,
     'bind_template' => '{username}@example.com',
+    'base_dn' => '',
     'ignore_cert' => true,
     'allowed_groups' => [],
 ];
@@ -430,23 +431,42 @@ function logout_user(): void
 // LDAP
 // ---------------------------------------------------------------------------
 
-function ldap_connect_config(array $ldap): mixed
+function ldap_build_uri(array $ldap): ?string
 {
-    if (!extension_loaded('ldap')) {
-        return null;
-    }
     $host = trim($ldap['host'] ?? '');
     if ($host === '') {
         return null;
     }
     $port = (int)($ldap['port'] ?? 636);
-    $uri = $host;
-    if (!str_contains($uri, '://')) {
-        $uri = 'ldaps://' . ltrim($uri, '/');
+    if (!str_contains($host, '://')) {
+        $host = 'ldaps://' . ltrim($host, '/');
     }
-    if (!str_contains($uri, ':')) {
-        $uri .= ':' . $port;
+    // Append port only when not already present (ignore : in ldaps://)
+    if (!preg_match('#:\d+$#', $host)) {
+        $host .= ':' . $port;
     }
+    return $host;
+}
+
+function ldap_apply_tls_options(bool $ignoreCert): void
+{
+    if (!$ignoreCert) {
+        return;
+    }
+    // Must be set on the global handle before ldap_connect() for LDAPS.
+    @ldap_set_option(null, LDAP_OPT_X_TLS_REQUIRE_CERT, LDAP_OPT_X_TLS_NEVER);
+}
+
+function ldap_connect_config(array $ldap): mixed
+{
+    if (!extension_loaded('ldap')) {
+        return null;
+    }
+    $uri = ldap_build_uri($ldap);
+    if ($uri === null) {
+        return null;
+    }
+    ldap_apply_tls_options(!empty($ldap['ignore_cert']));
     $conn = @ldap_connect($uri);
     if (!$conn) {
         return null;
@@ -454,33 +474,54 @@ function ldap_connect_config(array $ldap): mixed
     ldap_set_option($conn, LDAP_OPT_PROTOCOL_VERSION, 3);
     ldap_set_option($conn, LDAP_OPT_REFERRALS, 0);
     if (!empty($ldap['ignore_cert'])) {
-        ldap_set_option($conn, LDAP_OPT_X_TLS_REQUIRE_CERT, LDAP_OPT_X_TLS_NEVER);
+        @ldap_set_option($conn, LDAP_OPT_X_TLS_REQUIRE_CERT, LDAP_OPT_X_TLS_NEVER);
     }
     return $conn;
 }
 
-function ldap_bind_user(array $ldap, string $username, string $password): array
+function ldap_make_bind_dn(string $username, array $ldap): string
 {
-    if ($password === '') {
-        return ['ok' => false, 'error' => 'Password required'];
-    }
-    $conn = ldap_connect_config($ldap);
-    if (!$conn) {
-        return ['ok' => false, 'error' => 'LDAP unavailable'];
-    }
     $template = $ldap['bind_template'] ?? '{username}';
-    $bindDn = str_replace('{username}', $username, $template);
-    if (!@ldap_bind($conn, $bindDn, $password)) {
-        return ['ok' => false, 'error' => 'Invalid credentials'];
-    }
-    $groups = ldap_read_member_of($conn, $bindDn);
-    ldap_unbind($conn);
-    return ['ok' => true, 'bind_dn' => $bindDn, 'member_of' => $groups];
+    return str_replace('{username}', $username, $template);
 }
 
-function ldap_read_member_of(mixed $conn, string $bindDn): array
+function ldap_infer_base_dn(array $ldap): string
 {
-    $result = @ldap_read($conn, $bindDn, '(objectClass=*)', ['memberOf']);
+    if (!empty($ldap['base_dn'])) {
+        return trim($ldap['base_dn']);
+    }
+    $template = $ldap['bind_template'] ?? '';
+    if (preg_match('/@([^{}\s]+)/', $template, $m)) {
+        $parts = explode('.', strtolower(trim($m[1])));
+        $parts = array_filter($parts, fn($p) => $p !== '');
+        if ($parts) {
+            return implode(',', array_map(fn($p) => 'DC=' . $p, $parts));
+        }
+    }
+    return '';
+}
+
+function ldap_whoami_dn(mixed $conn): ?string
+{
+    if (!function_exists('ldap_exop_whoami')) {
+        return null;
+    }
+    $whoami = @ldap_exop_whoami($conn);
+    if (!is_string($whoami) || $whoami === '') {
+        return null;
+    }
+    if (str_starts_with($whoami, 'dn:')) {
+        return substr($whoami, 3);
+    }
+    return null;
+}
+
+function ldap_read_member_of_at_dn(mixed $conn, string $dn): array
+{
+    if ($dn === '') {
+        return [];
+    }
+    $result = @ldap_read($conn, $dn, '(objectClass=*)', ['memberOf'], 0, 1);
     if (!$result) {
         return [];
     }
@@ -491,6 +532,66 @@ function ldap_read_member_of(mixed $conn, string $bindDn): array
     $memberOf = $entries[0]['memberof'] ?? [];
     unset($memberOf['count']);
     return array_values($memberOf);
+}
+
+function ldap_fetch_member_of(mixed $conn, string $loginUsername, string $bindDn, array $ldap): array
+{
+    $dn = ldap_whoami_dn($conn);
+    if ($dn) {
+        $groups = ldap_read_member_of_at_dn($conn, $dn);
+        if ($groups) {
+            return $groups;
+        }
+    }
+
+    $groups = ldap_read_member_of_at_dn($conn, $bindDn);
+    if ($groups) {
+        return $groups;
+    }
+
+    $base = ldap_infer_base_dn($ldap);
+    if ($base === '') {
+        return [];
+    }
+
+    $safe = ldap_escape($loginUsername, '', LDAP_ESCAPE_FILTER);
+    $result = @ldap_search($conn, $base, "(sAMAccountName=$safe)", ['memberOf'], 0, 1);
+    if (!$result) {
+        return [];
+    }
+    $entries = ldap_get_entries($conn, $result);
+    if ($entries['count'] < 1) {
+        return [];
+    }
+    $memberOf = $entries[0]['memberof'] ?? [];
+    unset($memberOf['count']);
+    return array_values($memberOf);
+}
+
+function ldap_bind_user(array $ldap, string $username, string $password): array
+{
+    if ($password === '') {
+        return ['ok' => false, 'error' => 'Password required'];
+    }
+
+    $conn = ldap_connect_config($ldap);
+    if (!$conn) {
+        return ['ok' => false, 'error' => 'LDAP unavailable — check host, port, and php-ldap extension'];
+    }
+
+    $bindDn = ldap_make_bind_dn($username, $ldap);
+    if (!@ldap_bind($conn, $bindDn, $password)) {
+        $err = ldap_error($conn);
+        ldap_unbind($conn);
+        if (stripos($err, "Can't contact") !== false || stripos($err, 'connect') !== false) {
+            return ['ok' => false, 'error' => 'LDAP server unreachable (' . $err . ')'];
+        }
+        return ['ok' => false, 'error' => 'Invalid username or password'];
+    }
+
+    $groups = ldap_fetch_member_of($conn, $username, $bindDn, $ldap);
+    ldap_unbind($conn);
+    return ['ok' => true, 'bind_dn' => $bindDn, 'member_of' => $groups];
 }
 
 function ldap_group_matches(string $memberOfDn, string $groupName): bool
