@@ -1,0 +1,4 @@
+# Deny direct web access to bridge persistence file (contains host list)
+<Files "config.json">
+    Require all denied
+</Files>

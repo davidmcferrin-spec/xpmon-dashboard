@@ -72,6 +72,30 @@ if ($action === 'save_prefs') {
     if (isset($body['hide_win_updates']) && $global['force_hide_win_updates'] === null) {
         $prefs['hide_win_updates'] = (bool)$body['hide_win_updates'];
     }
+    if (isset($body['alert_hosts_all'])) {
+        $prefs['alert_hosts_all'] = (bool)$body['alert_hosts_all'];
+    }
+    if (isset($body['alert_hosts']) && is_array($body['alert_hosts'])) {
+        $prefs['alert_hosts'] = array_values(array_filter(
+            array_map('strval', $body['alert_hosts']),
+            fn($id) => $id !== ''
+        ));
+    }
+    if (isset($body['user_critical_apps']) && is_array($body['user_critical_apps'])) {
+        $existing = $prefs['user_critical_apps'] ?? [];
+        $clean = is_array($existing) ? $existing : [];
+        foreach ($body['user_critical_apps'] as $hostId => $appKeys) {
+            if (!is_string($hostId) || $hostId === '' || !is_array($appKeys)) {
+                continue;
+            }
+            $keys = array_values(array_filter(
+                array_map('strval', $appKeys),
+                fn($k) => $k !== ''
+            ));
+            $clean[$hostId] = $keys;
+        }
+        $prefs['user_critical_apps'] = $clean;
+    }
 
     $data['users'][$userIdx]['prefs'] = array_merge(DEFAULT_PREFS, $prefs);
     save_auth_data($data);

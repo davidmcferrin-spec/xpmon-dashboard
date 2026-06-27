@@ -134,7 +134,7 @@ $isKiosk = !empty($user['is_kiosk']);
       <button class="modal-close" data-modal="modalAlerts">✕</button>
     </div>
     <div class="modal-body">
-      <p class="hint">Select which apps trigger an alert when they stop running. The host going offline always triggers an alert regardless of this setting.</p>
+      <p class="hint">Select which apps trigger an alert for your account when they stop. Saved to your profile only. If you have not configured this host before, global defaults are shown until you save.</p>
       <div class="alert-app-list" id="alertsAppList"></div>
     </div>
     <div class="modal-footer">
@@ -177,6 +177,9 @@ $isKiosk = !empty($user['is_kiosk']);
       </label>
       <label>IP Address
         <input type="text" id="editIp" placeholder="10.70.4.84">
+      </label>
+      <label>Connection Hostname
+        <input type="text" id="editHostname" placeholder="FQDN or IP for XCL export (defaults to IP)">
       </label>
       <label>Port
         <input type="number" id="editPort" value="9875" min="1" max="65535">
@@ -248,6 +251,8 @@ $isKiosk = !empty($user['is_kiosk']);
           <option value="none">None</option>
         </select>
       </label>
+      <p class="hint">Check the hosts you want alerts for. All checked monitors every host; uncheck hosts to limit alerts to a subset.</p>
+      <div class="alert-host-list" id="prefAlertHostsList"></div>
       <div class="edit-section-title">Dashboard</div>
       <label class="checkbox-label">
         <input type="checkbox" id="prefShowIgnored">

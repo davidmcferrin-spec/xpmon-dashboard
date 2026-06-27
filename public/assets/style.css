@@ -245,6 +245,7 @@ html, body {
 .host-card.offline { opacity: 0.65; }
 .host-card.offline .card-header { border-left-color: var(--red); }
 .host-card.connected .card-header { border-left-color: var(--green); }
+.host-card.checking .card-header { border-left-color: var(--yellow, #eab308); }
 
 .card-header {
   display: flex;
@@ -309,6 +310,7 @@ html, body {
   letter-spacing: 0.3px;
 }
 .badge-connected  { background: rgba(34,197,94,0.15);  color: var(--green); }
+.badge-checking   { background: rgba(234,179,8,0.15);  color: var(--yellow, #eab308); }
 .badge-offline    { background: rgba(239,68,68,0.15);  color: var(--red); }
 .badge-update     { background: rgba(245,158,11,0.15); color: var(--yellow); }
 
@@ -676,6 +678,16 @@ html, body {
 .alert-app-list::-webkit-scrollbar { width: 4px; }
 .alert-app-list::-webkit-scrollbar-track { background: transparent; }
 .alert-app-list::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+.alert-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+.alert-host-row .muted { color: var(--text-muted); font-size: 0.85em; }
 
 .alert-app-row {
   display: flex;

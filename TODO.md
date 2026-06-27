@@ -2,11 +2,23 @@
 ## TO DO ITEMS
 ##
 
-## Change to profile based Alerts, allow a user
-##     to change what Systems and how alerts
-##     (Flash/Horn/Both/None) happen — per-host selection still global
+## WebSocket token auth — PHP issues short-lived HMAC token; bridge validates
+##     on WS connect and gates host_command, add_host, etc.
+
+## Admin UI gaps — permission overrides UI, forced-pref indicators in profile
 
 ## COMPLETED ──────────────────────────────────────────────────────────────────
+
+## [DONE] Profile-based alerts — per-user alert_hosts, alert_mode, optional
+##     user_critical_apps; evaluateAlerts in app.js uses session prefs
+
+## [DONE] XCL hostname fidelity — auto-persist reported_hostname on serverinfo,
+##     import hostname/reportedhostname, connection hostname in edit modal
+
+## [DONE] Block config.json from web — public/.htaccess Require all denied
+
+## [DONE] Stability polish — config save lock, CHECKING degraded badge,
+##     case-insensitive Stop All exclusions, removed bridge/*.bak* files
 
 ## [DONE] Add Local and LDAP Auth — PHP sessions, roles, LDAPS user bind,
 ##     LDAP groups → roles, admin UI, default admin/admin (change on first login)
@@ -15,20 +27,14 @@
 
 ## [DONE] Allow user/admin to hide Windows Updates and Door — profile pref + admin force
 
-## [DONE] Make bridge stop faster — fast shutdown via SIGTERM, force-closes
-##     all WebSocket connections immediately, returns in <2s
+## [DONE] Make bridge stop faster — fast shutdown via SIGTERM
 
-## [DONE] Light and Dark Theme — toggle in topbar, saved to localStorage,
-##     applies to dashboard and bridge admin page
+## [DONE] Light and Dark Theme — toggle in topbar, saved to profile + localStorage
 
 ## [DONE] Allow for retry before saying a system/service is down —
 ##     OFFLINE_MISS_LIMIT constant (default 2 = ~90s grace period)
 
-## [DONE] Download RossVideo Status Client XCL file — xcl.php generates
-##     a native-compatible StatusClientList.xcl from config.json
+## [DONE] Download RossVideo Status Client XCL file — xcl.php
 
-## [DONE] Bridge 24/7 robustness — content_hash diff broadcast, smart
-##     _dispatch, atomic config save, staggered connect/keepalive, unified
-##     offline watchdog with force reconnect, task supervisor, health log,
-##     WS ping/dead-client pruning, host_command with per-host lock,
-##     TCP SO_KEEPALIVE, asyncio exception handler
+## [DONE] Bridge 24/7 robustness — content_hash diff broadcast, watchdog,
+##     task supervisor, upgrade grace, atomic config save, staggered keepalive

@@ -58,6 +58,7 @@ STOP_EXCLUDE_NAMES = frozenset({
     "XPression Monitor",
     "XPression Monitor Launcher",
 })
+STOP_EXCLUDE_NAMES_LOWER = frozenset(n.lower() for n in STOP_EXCLUDE_NAMES)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,6 +124,7 @@ class HostState:
         d = asdict(self)
         d.pop("_miss_count", None)
         d.pop("_upgrade_grace", None)
+        d["checking"] = self.connected and self._miss_count > 0
         now = time.time()
         d["upgrade_grace"] = {
             k: v for k, v in self._upgrade_grace.items() if v > now
@@ -135,6 +137,7 @@ class HostState:
         """SHA-1 of visible state — excludes last_seen and internal counters."""
         payload = {
             "connected": self.connected,
+            "checking": self.connected and self._miss_count > 0,
             "offline_since": self.offline_since,
             "version": self.version,
             "build": self.build,
@@ -393,6 +396,7 @@ class XPresMonClient:
             raise ConnectionError("Expected serverinfo, got nothing or wrong packet")
         if self._handle_serverinfo(pkt):
             await self.bridge.broadcast_host(self.state)
+        await self.bridge.maybe_persist_hostname(self.state)
 
         await self._send(make_login_packet())
         await self._send(PACKET_GETINVENTORY)
@@ -425,6 +429,7 @@ class XPresMonClient:
             self.state.last_seen = time.time()
             if self.state._miss_count > 0:
                 self.state._miss_count = 0
+                await self.bridge.broadcast_host(self.state)
             changed = self._dispatch(pkt)
             if changed:
                 await self.bridge.broadcast_host(self.state)
@@ -669,7 +674,10 @@ class XPresMonBridge:
         self.clients: dict[str, XPresMonClient] = {}
         self.ws_clients: set[WebSocketServerProtocol] = set()
         self._lock = asyncio.Lock()
+        self._config_lock = asyncio.Lock()
         self._broadcast_hashes: dict[str, str] = {}
+        self._loaded_reported_hostname: dict[str, str] = {}
+        self._loaded_hostname: dict[str, str] = {}
 
     # ---- Config loading ----
 
@@ -693,6 +701,8 @@ class XPresMonBridge:
                     reported_hostname = h.get("reported_hostname", ""),
                 )
                 self.hosts[state.id] = state
+                self._loaded_reported_hostname[state.id] = h.get("reported_hostname", "")
+                self._loaded_hostname[state.id] = h.get("hostname", h.get("ip", ""))
             log.info("Loaded %d hosts from config", len(self.hosts))
         except Exception as e:
             log.error("Failed to load config: %s", e)
@@ -715,14 +725,19 @@ class XPresMonBridge:
     async def add_host(self, host_def: dict) -> HostState:
         async with self._lock:
             hid = host_def.get("id") or str(uuid.uuid4())
+            ip = host_def["ip"]
             state = HostState(
                 id           = hid,
                 display_name = host_def["display_name"],
-                ip           = host_def["ip"],
+                ip           = ip,
                 port         = host_def.get("port", 9875),
                 group        = host_def.get("group", "Ungrouped"),
+                hostname          = host_def.get("hostname") or ip,
+                reported_hostname = host_def.get("reported_hostname", ""),
             )
             self.hosts[hid] = state
+            self._loaded_hostname[hid] = state.hostname
+            self._loaded_reported_hostname[hid] = state.reported_hostname
             client = self._make_client(state, stagger=False)
             self.clients[hid] = client
             client.start()
@@ -743,6 +758,10 @@ class XPresMonBridge:
             return True
 
     async def _save_config(self):
+        async with self._config_lock:
+            self._write_config()
+
+    def _write_config(self):
         data = {
             "hosts": [
                 {
@@ -754,7 +773,7 @@ class XPresMonBridge:
                     "critical_apps":  h.critical_apps,
                     "canvas_enabled":    h.canvas_enabled,
                     "canvas_port":       h.canvas_port,
-                    "hostname":          h.hostname,
+                    "hostname":          h.hostname or h.ip,
                     "reported_hostname": h.reported_hostname,
                 }
                 for h in self.hosts.values()
@@ -763,6 +782,28 @@ class XPresMonBridge:
         tmp = CONFIG_PATH.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2))
         os.replace(tmp, CONFIG_PATH)
+
+    async def maybe_persist_hostname(self, state: HostState):
+        """Write hostname/reported_hostname to config when first learned from serverinfo."""
+        if not state.reported_hostname:
+            return
+        if not state.hostname:
+            state.hostname = state.ip
+        loaded_reported = self._loaded_reported_hostname.get(state.id, "")
+        loaded_hostname = self._loaded_hostname.get(state.id, "")
+        current_hostname = state.hostname or state.ip
+        if (
+            state.reported_hostname == loaded_reported
+            and current_hostname == (loaded_hostname or state.ip)
+        ):
+            return
+        await self._save_config()
+        self._loaded_reported_hostname[state.id] = state.reported_hostname
+        self._loaded_hostname[state.id] = current_hostname
+        log.info(
+            "[%s] persisted hostname metadata (hostname=%s reported=%s)",
+            state.display_name, current_hostname, state.reported_hostname,
+        )
 
     # ---- WebSocket ----
 
@@ -832,6 +873,8 @@ class XPresMonBridge:
                 h.group          = msg.get("group", h.group)
                 h.canvas_enabled = bool(msg.get("canvas_enabled", h.canvas_enabled))
                 h.canvas_port    = int(msg.get("canvas_port", h.canvas_port) or 9056)
+                if "hostname" in msg:
+                    h.hostname = (msg.get("hostname") or h.ip).strip()
                 new_ip   = msg.get("ip", h.ip)
                 new_port = int(msg.get("port", h.port) or 9875)
                 if new_ip != h.ip or new_port != h.port:
@@ -843,6 +886,7 @@ class XPresMonBridge:
                         self.clients[hid] = client
                         client.start()
                 await self._save_config()
+                self._loaded_hostname[hid] = h.hostname or h.ip
                 await self.broadcast_host(h)
 
         elif action == "host_command":
@@ -878,7 +922,7 @@ class XPresMonBridge:
                 elif command == "stop":
                     killed = 0
                     for app in state.apps:
-                        if app.name in STOP_EXCLUDE_NAMES:
+                        if app.name.lower() in STOP_EXCLUDE_NAMES_LOWER:
                             continue
                         if app.appid and app.status == 2 and not app.ignore_status:
                             pkt = f'<packet type="kill" appid="{app.appid}"/>'
@@ -932,13 +976,17 @@ class XPresMonBridge:
                 ip   = (client.findtext("ip") or "").strip()
                 name = (client.findtext("machinename") or ip).strip()
                 port = int(client.findtext("port") or "9875")
+                conn_hostname = (client.findtext("hostname") or ip).strip()
+                reported = (client.findtext("reportedhostname") or "").strip().lower()
                 if not ip or ip in existing_ips:
                     continue
                 await self.add_host({
-                    "display_name": name,
-                    "ip":           ip,
-                    "port":         port,
-                    "group":        "Ungrouped",
+                    "display_name":      name,
+                    "ip":                ip,
+                    "port":              port,
+                    "group":             "Ungrouped",
+                    "hostname":          conn_hostname,
+                    "reported_hostname": reported,
                 })
                 existing_ips.add(ip)
                 added += 1
@@ -999,6 +1047,7 @@ class XPresMonBridge:
                     if state._miss_count > 0:
                         log.info("[%s] recovered, resetting miss counter", state.display_name)
                         state._miss_count = 0
+                        await self.broadcast_host(state)
                     continue
 
                 state._miss_count += 1
@@ -1007,6 +1056,7 @@ class XPresMonBridge:
                     state.display_name, OFFLINE_GRACE,
                     state._miss_count, OFFLINE_MISS_LIMIT,
                 )
+                await self.broadcast_host(state)
                 if state._miss_count >= OFFLINE_MISS_LIMIT:
                     client = self.clients.get(hid)
                     if client:

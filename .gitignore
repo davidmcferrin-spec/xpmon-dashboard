@@ -1,8 +1,7 @@
 # Python
 bridge/__pycache__/
 bridge/venv/
-bridge/*.bak
-bridge/*.bak2
+bridge/*.bak*
 *.pyc
 
 # Config (contains live host list — commit a blank template instead)

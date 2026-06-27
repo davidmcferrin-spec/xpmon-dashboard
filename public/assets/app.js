@@ -144,6 +144,43 @@ function isInUpgradeGrace(host, app) {
   return until && until > Date.now() / 1000;
 }
 
+/** Monitor all hosts when alert_hosts_all is true (default); else only IDs in alert_hosts. */
+function shouldAlertForHost(hostId) {
+  const p = userPrefs();
+  if (p.alert_hosts_all !== false) return true;
+  return (p.alert_hosts || []).includes(hostId);
+}
+
+/** Per-user app overrides; falls back to global host critical_apps when unset. */
+function criticalAppsForHost(host) {
+  const overrides = userPrefs().user_critical_apps;
+  if (overrides && typeof overrides === 'object'
+      && Object.prototype.hasOwnProperty.call(overrides, host.id)) {
+    return new Set(overrides[host.id] || []);
+  }
+  return new Set(host.critical_apps || []);
+}
+
+async function saveUserPrefs(partial) {
+  const r = await fetch('api/profile.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'save_prefs', ...partial }),
+  });
+  const d = await r.json();
+  if (d.ok && d.prefs) XPMON_USER.prefs = d.prefs;
+  return d;
+}
+
+function clearHostAlerts(hostId) {
+  for (const key of [...activeAlerts.keys()]) {
+    if (key === `host:${hostId}` || key.startsWith(`app:${hostId}:`)) {
+      activeAlerts.delete(key);
+    }
+  }
+  clearFlash(hostId);
+}
+
 /** Remove alert entries for app GUIDs no longer in inventory. */
 function reconcileActiveAlerts(host) {
   const validKeys = new Set((host.apps || []).map(a => a.key));
@@ -174,11 +211,16 @@ function startAlertRecheck() {
 function evaluateAlerts(host, previousHost) {
   if (!initialLoadDone) return;
 
+  if (!shouldAlertForHost(host.id)) {
+    clearHostAlerts(host.id);
+    return;
+  }
+
   reconcileActiveAlerts(host);
 
-  const criticalApps = new Set(host.critical_apps || []);
+  const criticalApps = criticalAppsForHost(host);
 
-  // --- Host offline ---
+  // --- Host offline (not while CHECKING — still connected) ---
   const hostKey = `host:${host.id}`;
   if (!host.connected) {
     if (!activeAlerts.has(hostKey)) {
@@ -471,7 +513,7 @@ function renderHost(host) {
 function buildHostCard(host, expanded) {
   const card = document.createElement('div');
   card.id = `host-${host.id}`;
-  card.className = `host-card ${host.connected ? 'connected' : 'offline'} ${expanded ? 'expanded' : ''}`;
+  card.className = `host-card ${host.connected ? (host.checking ? 'checking' : 'connected') : 'offline'} ${expanded ? 'expanded' : ''}`;
 
   const r = (host.door_color & 0xFF);
   const g = (host.door_color >> 8) & 0xFF;
@@ -483,7 +525,7 @@ function buildHostCard(host, expanded) {
     : '';
   const metaParts = [host.ip, versionStr].filter(Boolean);
 
-  const criticalApps = new Set(host.critical_apps || []);
+  const criticalApps = criticalAppsForHost(host);
   const showDoor = host.door_detected && !pref('hide_door', false);
   const showUpd = host.win_updates > 0 && !pref('hide_win_updates', false);
 
@@ -512,7 +554,9 @@ function buildHostCard(host, expanded) {
       <div class="card-badges">
         ${showDoor ? `<span class="door-swatch" style="background:${doorRgb}" title="Door color"></span>` : ''}
         ${showUpd ? `<span class="badge badge-update" title="${host.win_updates} update(s) pending${host.win_pending_restart ? ' · Restart required' : ''}">UPD</span>` : ''}
-        <span class="badge ${host.connected ? 'badge-connected' : 'badge-offline'}">${host.connected ? 'ONLINE' : 'OFFLINE'}</span>
+        ${host.checking
+          ? '<span class="badge badge-checking">CHECKING</span>'
+          : `<span class="badge ${host.connected ? 'badge-connected' : 'badge-offline'}">${host.connected ? 'ONLINE' : 'OFFLINE'}</span>`}
       </div>
       <span class="card-expand-icon">▼</span>
     </div>
@@ -703,7 +747,10 @@ function openAlertsModal(hostId, hostName) {
   const host = hosts.get(hostId);
   if (!host) return;
 
-  const criticalApps = new Set(host.critical_apps || []);
+  const userApps = userPrefs().user_critical_apps || {};
+  const criticalApps = Object.prototype.hasOwnProperty.call(userApps, hostId)
+    ? new Set(userApps[hostId] || [])
+    : new Set(host.critical_apps || []);
 
   document.getElementById('alertsHostName').textContent = hostName;
 
@@ -731,20 +778,29 @@ function openAlertsModal(hostId, hostName) {
   openModal('modalAlerts');
 }
 
-document.getElementById('btnAlertsSave')?.addEventListener('click', () => {
+document.getElementById('btnAlertsSave')?.addEventListener('click', async () => {
   if (!alertsTargetHostId) return;
 
+  const hostId = alertsTargetHostId;
   const checked = [...document.querySelectorAll('#alertsAppList input[type=checkbox]:checked')]
     .map(cb => cb.value);
 
-  wsSend({
-    action: 'set_critical_apps',
-    id: alertsTargetHostId,
-    critical_apps: checked,
-  });
+  const userApps = { ...(userPrefs().user_critical_apps || {}) };
+  userApps[hostId] = checked;
 
-  closeModal('modalAlerts');
-  alertsTargetHostId = null;
+  try {
+    const d = await saveUserPrefs({ user_critical_apps: userApps });
+    if (d.ok) {
+      for (const h of hosts.values()) evaluateAlerts(h, h);
+      toast('success', 'Your alert preferences saved');
+      closeModal('modalAlerts');
+      alertsTargetHostId = null;
+    } else {
+      toast('error', d.error || 'Save failed');
+    }
+  } catch (e) {
+    toast('error', 'Save failed');
+  }
 });
 
 document.getElementById('btnAlertsTest')?.addEventListener('click', () => {
@@ -809,6 +865,7 @@ function openEditModal(hostId) {
   document.getElementById('editHostId').value          = hostId;
   document.getElementById('editName').value            = host.display_name;
   document.getElementById('editIp').value              = host.ip;
+  document.getElementById('editHostname').value        = host.hostname || host.ip;
   document.getElementById('editPort').value            = host.port || 9875;
   document.getElementById('editGroup').value           = host.group || 'Ungrouped';
   document.getElementById('editCanvasEnabled').checked = !!host.canvas_enabled;
@@ -840,12 +897,13 @@ document.getElementById('btnEditHostSubmit')?.addEventListener('click', () => {
   const id     = document.getElementById('editHostId').value;
   const name   = document.getElementById('editName').value.trim();
   const ip     = document.getElementById('editIp').value.trim();
+  const hostname = document.getElementById('editHostname').value.trim();
   const port   = parseInt(document.getElementById('editPort').value) || 9875;
   const group  = document.getElementById('editGroup').value.trim() || 'Ungrouped';
   const canvas = document.getElementById('editCanvasEnabled').checked;
   const cport  = parseInt(document.getElementById('editCanvasPort').value) || 9056;
   if (!name || !ip) { toast('error', 'Name and IP are required'); return; }
-  wsSend({ action: 'edit_host', id, display_name: name, ip, port, group,
+  wsSend({ action: 'edit_host', id, display_name: name, ip, port, group, hostname: hostname || ip,
            canvas_enabled: canvas, canvas_port: cport });
   closeModal('modalEditHost');
   editTargetHostId = null;
@@ -1054,6 +1112,38 @@ function applyPrefsToProfileForm() {
   if (door) door.checked = !!p.hide_door;
   const upd = document.getElementById('prefHideWinUpdates');
   if (upd) upd.checked = !!p.hide_win_updates;
+  populateAlertHostsList();
+}
+
+function populateAlertHostsList() {
+  const container = document.getElementById('prefAlertHostsList');
+  if (!container) return;
+  const p = userPrefs();
+  const allMode = p.alert_hosts_all !== false;
+  const selected = new Set(p.alert_hosts || []);
+  const sorted = [...hosts.values()].sort((a, b) =>
+    (a.display_name || '').localeCompare(b.display_name || '')
+  );
+  if (sorted.length === 0) {
+    container.innerHTML = '<p class="hint">No hosts loaded yet.</p>';
+    return;
+  }
+  container.innerHTML = sorted.map(h => {
+    const checked = allMode || selected.has(h.id);
+    return `<label class="checkbox-label alert-host-row">
+      <input type="checkbox" value="${esc(h.id)}" ${checked ? 'checked' : ''}>
+      <span>${esc(h.display_name)} <span class="muted">${esc(h.ip)}</span></span>
+    </label>`;
+  }).join('');
+}
+
+function collectAlertHostsFromForm() {
+  const boxes = document.querySelectorAll('#prefAlertHostsList input[type="checkbox"]');
+  const checked = [...boxes].filter(b => b.checked).map(b => b.value);
+  if (boxes.length > 0 && checked.length === boxes.length) {
+    return { alert_hosts_all: true, alert_hosts: [] };
+  }
+  return { alert_hosts_all: false, alert_hosts: checked };
 }
 
 document.getElementById('btnProfile')?.addEventListener('click', () => {
@@ -1062,10 +1152,13 @@ document.getElementById('btnProfile')?.addEventListener('click', () => {
 });
 
 document.getElementById('btnSaveProfile')?.addEventListener('click', async () => {
+  const alertHostPrefs = collectAlertHostsFromForm();
   const payload = {
     action: 'save_prefs',
     theme: document.getElementById('prefTheme')?.value,
     alert_mode: document.getElementById('prefAlertMode')?.value,
+    alert_hosts_all: alertHostPrefs.alert_hosts_all,
+    alert_hosts: alertHostPrefs.alert_hosts,
     show_ignored_services: document.getElementById('prefShowIgnored')?.checked,
     hide_door: document.getElementById('prefHideDoor')?.checked,
     hide_win_updates: document.getElementById('prefHideWinUpdates')?.checked,
@@ -1086,6 +1179,7 @@ document.getElementById('btnSaveProfile')?.addEventListener('click', async () =>
         updateThemeButton(payload.theme);
       }
       renderAll();
+      for (const h of hosts.values()) evaluateAlerts(h, h);
       toast('success', 'Profile saved');
       closeModal('modalProfile');
     } else {

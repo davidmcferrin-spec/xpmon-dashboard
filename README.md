@@ -12,7 +12,7 @@ Web-based status dashboard for Ross Video XPression Monitor servers. Replaces th
 - **Windows Update indicator** — update count and pending restart flag
 - **Door color** — chassis door color swatch from XPression hardware config
 - **Host controls** — Start All Processes, Stop All Processes, Reboot Machine (with confirmation)
-- **Alerts** — per-host critical app config; plays alert sound + flashes card on host offline or critical app stopped
+- **Alerts** — per-host critical app config (global); per-user alert mode, host subset, and optional app overrides via profile
 - **WSS Canvas links** — direct links to XPression Canvas Outputs/Previews (configurable per host)
 - **XCL import/export** — import host list from `StatusClientList.xcl`; export current list back to XCL
 - **Bridge admin page** — live log tail, service start/stop/restart from the browser
@@ -44,7 +44,8 @@ public/                   PHP/Apache — serves dashboard HTML
   api/admin.php           Admin API
   assets/app.js           WebSocket client + UI
   assets/style.css        Dark/light theme
-  config.json             Host persistence (written by bridge)
+  config.json             Host persistence (written by bridge; not web-accessible)
+  .htaccess               Denies direct HTTP access to config.json
 data/
   auth.json               Users, LDAP config (auto-created on first login)
 ```
