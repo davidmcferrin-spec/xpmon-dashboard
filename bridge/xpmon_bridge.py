@@ -23,9 +23,10 @@ import struct
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from pathlib import Path
 from typing import Optional
+from xml.sax.saxutils import quoteattr
 
 import websockets
 from websockets.server import WebSocketServerProtocol
@@ -211,6 +212,62 @@ def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     except ET.ParseError:
         return None
 
+def _inventory_text(elem: ET.Element, name: str) -> str:
+    """Read an inventory field from an XML attribute or child element."""
+    val = (elem.get(name) or "").strip()
+    if val:
+        return val
+    child = elem.find(name)
+    if child is not None and child.text:
+        return child.text.strip()
+    return ""
+
+
+def _is_abs_windows_path(path: str) -> bool:
+    if not path:
+        return False
+    if path.startswith("\\\\"):
+        return True
+    return len(path) >= 2 and path[1] == ":"
+
+
+def _join_windows_path(folder: str, name: str) -> str:
+    return folder.rstrip("\\/") + "\\" + name.lstrip("\\/")
+
+
+def _resolve_startup_cmd(app: AppEntry) -> str:
+    """Return the launch command path the monitor expects in a start packet."""
+    cmd = (app.startupcmd or "").strip()
+    if not cmd:
+        if app.folder and app.process:
+            return _join_windows_path(app.folder, app.process)
+        return ""
+    if _is_abs_windows_path(cmd):
+        return cmd
+    if app.folder:
+        return _join_windows_path(app.folder, cmd)
+    if app.process and cmd.lower() == app.process.lower():
+        return cmd
+    return cmd
+
+
+def _build_start_packet(apps: list[tuple[str, str]]) -> str:
+    """Build a start-all packet. Each item is (cmd, args); omit args when empty."""
+    app_lines: list[str] = []
+    for cmd, args in apps:
+        if args:
+            app_lines.append(
+                f'  <app cmd={quoteattr(cmd)} args={quoteattr(args)}/>'
+            )
+        else:
+            app_lines.append(f'  <app cmd={quoteattr(cmd)}/>')
+    body = "\r\n".join(app_lines)
+    return (
+        f'<packet type="start">\r\n<apps>\r\n{body}\r\n'
+        f'</apps>\r\n</packet>'
+    )
+
+
 def _apps_snapshot(apps: list) -> tuple:
     return tuple(
         (a.key, a.status, a.process, a.version, a.ignore_status, a.appid)
@@ -233,21 +290,42 @@ def _version_sort_key(version: str) -> tuple:
             parts.append((1, chunk))
     return tuple(parts)
 
+def _pick_inventory_row(group: list[AppEntry]) -> AppEntry:
+    """Prefer running row, then row with a usable startup command, then newest version."""
+    if len(group) == 1:
+        return group[0]
+
+    candidates = [a for a in group if a.status == 2 and not a.ignore_status]
+    pool = candidates if candidates else group
+
+    def row_rank(app: AppEntry) -> tuple:
+        resolved = _resolve_startup_cmd(app)
+        return (
+            bool(resolved and _is_abs_windows_path(resolved)),
+            bool(resolved),
+            _version_sort_key(app.version),
+        )
+
+    chosen = max(pool, key=row_rank)
+    if not chosen.startupcmd:
+        for app in pool:
+            if app.startupcmd:
+                chosen = replace(
+                    chosen,
+                    startupcmd=app.startupcmd,
+                    startupargs=app.startupargs or chosen.startupargs,
+                )
+                break
+    return chosen
+
+
 def collapse_inventory_apps(apps: list) -> list[AppEntry]:
     """One row per logical app (name+process); prefer running, then newest version."""
     groups: dict[tuple[str, str], list[AppEntry]] = {}
     for app in apps:
         groups.setdefault(app_identity(app), []).append(app)
 
-    result: list[AppEntry] = []
-    for group in groups.values():
-        if len(group) == 1:
-            result.append(group[0])
-            continue
-        candidates = [a for a in group if a.status == 2 and not a.ignore_status]
-        pool = candidates if candidates else group
-        result.append(max(pool, key=lambda a: _version_sort_key(a.version)))
-    return result
+    return [_pick_inventory_row(group) for group in groups.values()]
 
 def migrate_critical_apps(
     critical_apps: list[str],
@@ -570,8 +648,8 @@ class XPresMonClient:
                     version        = app.get("version", ""),
                     folder         = app.get("folder", ""),
                     process        = app.get("process", ""),
-                    startupcmd     = app.get("startupcmd", ""),
-                    startupargs    = app.get("startupargs", ""),
+                    startupcmd     = _inventory_text(app, "startupcmd"),
+                    startupargs    = _inventory_text(app, "startupargs"),
                     appid          = app.get("appid", ""),
                     status         = int(app.get("status", "0")),
                     heartbeat      = int(app.get("heartbeat", "0")),
@@ -695,6 +773,7 @@ class XPresMonBridge:
         self._broadcast_hashes: dict[str, str] = {}
         self._loaded_reported_hostname: dict[str, str] = {}
         self._loaded_hostname: dict[str, str] = {}
+        self._shutdown_event = asyncio.Event()
 
     # ---- Config loading ----
 
@@ -955,22 +1034,32 @@ class XPresMonBridge:
                     log.info("[%s] STOP ALL sent (%d kill packets)", state.display_name, killed)
 
                 elif command == "start":
-                    app_entries = []
+                    start_apps: list[tuple[str, str]] = []
                     for app in state.apps:
-                        if app.status != 2 and not app.ignore_status and app.startupcmd:
-                            cmd  = app.startupcmd.replace("&", "&amp;").replace('"', "&quot;")
-                            args = (app.startupargs or "").replace("&", "&amp;").replace('"', "&quot;")
-                            app_entries.append(f'  <app cmd="{cmd}" args="{args}"/>')
-                    if app_entries:
-                        apps_xml = "\r\n".join(app_entries)
-                        pkt = (
-                            f'<packet type="start">\r\n<apps>\r\n{apps_xml}\r\n'
-                            f'</apps>\r\n</packet>'
-                        )
+                        if app.status == 2 or app.ignore_status:
+                            continue
+                        cmd = _resolve_startup_cmd(app)
+                        if not cmd:
+                            continue
+                        args = (app.startupargs or "").strip()
+                        start_apps.append((cmd, args))
+
+                    if start_apps:
+                        pkt = _build_start_packet(start_apps)
                         await client._send(pkt)
-                        log.info("[%s] START ALL sent (%d apps)", state.display_name, len(app_entries))
+                        log.info(
+                            "[%s] START ALL sent (%d apps)",
+                            state.display_name, len(start_apps),
+                        )
+                        log.debug("[%s] start packet:\n%s", state.display_name, pkt)
+                        await asyncio.sleep(1.5)
                     else:
                         log.info("[%s] START ALL: no stopped apps to start", state.display_name)
+                        await ws.send(json.dumps({
+                            "type": "command_result", "id": hid, "command": command,
+                            "ok": False, "error": "No stopped apps with a startup command",
+                        }))
+                        return
 
                 else:
                     await ws.send(json.dumps({
@@ -1153,7 +1242,7 @@ class XPresMonBridge:
             except NotImplementedError:
                 pass
 
-        await asyncio.Future()
+        await self._shutdown_event.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -1178,7 +1267,7 @@ async def _shutdown(bridge: XPresMonBridge, ws_server):
 
     ws_server.close()
     await ws_server.wait_closed()
-    asyncio.get_running_loop().stop()
+    bridge._shutdown_event.set()
 
 if __name__ == "__main__":
     asyncio.run(main())
