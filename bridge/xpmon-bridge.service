@@ -12,6 +12,7 @@ WorkingDirectory=/opt/xpmon-web/bridge
 ExecStart=/opt/xpmon-web/venv/bin/python xpmon_bridge.py
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=0
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=xpmon-bridge

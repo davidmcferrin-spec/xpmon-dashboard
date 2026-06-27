@@ -401,6 +401,7 @@ html, body {
 }
 .app-running  .app-status-dot { background: var(--green); }
 .app-stopped  .app-status-dot { background: var(--red); }
+.app-upgrading .app-status-dot { background: var(--yellow); }
 .app-ignored  .app-status-dot { background: var(--gray); }
 .app-name {
   flex: 1;
@@ -425,6 +426,7 @@ html, body {
   text-align: right;
 }
 .app-stopped  .app-state-label { color: var(--red); }
+.app-upgrading .app-state-label { color: var(--yellow); }
 .app-ignored  .app-state-label { color: var(--gray); }
 
 /* Card footer actions */

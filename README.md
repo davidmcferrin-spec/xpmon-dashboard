@@ -208,7 +208,9 @@ Ross Video XPression Monitor TCP/9875 (reverse-engineered from pcap):
 ## Performance
 
 - **Bridge broadcast:** SHA-1 content hash — no WS message sent when state unchanged. Keepalives generate zero traffic.
-- **Offline retry:** configurable miss counter (`OFFLINE_MISS_LIMIT`) before marking host down.
+- **Smart dispatch:** inventory, disks, doorconfig, and winupdate only broadcast when values actually change.
+- **24/7 supervision:** staggered connect/keepalive, task supervisor, health log every 5 min, watchdog force-reconnect on stale TCP.
+- **Offline retry:** configurable miss counter (`OFFLINE_MISS_LIMIT`) before forcing reconnect.
 - **Fast shutdown:** `SIGTERM` force-closes all connections; `systemctl stop` returns in <2s.
 - **Frontend rendering:** `requestAnimationFrame` queue batches DOM updates to one pass per paint frame.
 - **Capacity:** 40 hosts / 20 concurrent browser clients comfortably supported at current scale.

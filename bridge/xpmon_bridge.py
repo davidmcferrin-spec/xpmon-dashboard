@@ -12,9 +12,13 @@ Protocol summary (from wire analysis):
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
+import random
 import signal
+import socket
 import struct
 import time
 import uuid
@@ -34,12 +38,26 @@ CONFIG_PATH = Path(__file__).parent.parent / "public" / "config.json"
 WS_HOST = "0.0.0.0"
 WS_PORT = 8765
 OFFLINE_GRACE = 45          # seconds of silence per watchdog check
-OFFLINE_MISS_LIMIT = 2      # consecutive misses before marking a host offline
+OFFLINE_MISS_LIMIT = 2      # consecutive misses before forcing reconnect
 KEEPALIVE_INTERVAL = 20     # seconds between keepalive pings (must be < server idle timeout ~30s)
 DISK_POLL_INTERVAL = 60     # seconds between diskstatus polls
+INVENTORY_POLL_INTERVAL = 60  # seconds between getinventory polls (live upgrade detection)
+APP_UPGRADE_GRACE = 90      # seconds to suppress critical-app alerts after version/key change
 RECONNECT_DELAY_MIN = 5     # seconds
 RECONNECT_DELAY_MAX = 60    # seconds (exponential backoff cap)
+STARTUP_STAGGER_MAX = 5.0   # max random delay before first connect (spread load on bridge restart)
+HEALTH_LOG_INTERVAL = 300   # seconds between periodic health summaries
+TASK_SUPERVISOR_INTERVAL = 60  # seconds between dead-task checks
+WS_MAX_MESSAGE_SIZE = 1_048_576
+WS_PING_INTERVAL = 30
+WS_PING_TIMEOUT = 10
 APPNAME = "xpStatusClient"
+
+# Never kill these when Stop All is requested — needed to restart everything else
+STOP_EXCLUDE_NAMES = frozenset({
+    "XPression Monitor",
+    "XPression Monitor Launcher",
+})
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +77,9 @@ class AppEntry:
     version: str
     folder: str
     process: str
+    startupcmd: str
+    startupargs: str
+    appid: str           # live process instance e.g. "XPression.exe(8564)"
     status: int          # 0=stopped, 2=running
     heartbeat: int
     last_heartbeat: int
@@ -92,22 +113,68 @@ class HostState:
     apps: list = field(default_factory=list)
     disks: list = field(default_factory=list)
     last_seen: float = 0.0
-    critical_apps: list = field(default_factory=list)  # list of app key GUIDs to alert on
+    critical_apps: list = field(default_factory=list)
     _miss_count: int = 0  # consecutive watchdog misses (not persisted)
-    canvas_enabled: bool = False   # WSS Canvas links enabled
-    canvas_port: int = 9056        # WSS Canvas HTTP port
+    _upgrade_grace: dict = field(default_factory=dict)  # identity_key → expiry unix time
+    canvas_enabled: bool = False
+    canvas_port: int = 9056
 
     def to_dict(self) -> dict:
         d = asdict(self)
+        d.pop("_miss_count", None)
+        d.pop("_upgrade_grace", None)
+        now = time.time()
+        d["upgrade_grace"] = {
+            k: v for k, v in self._upgrade_grace.items() if v > now
+        }
         d["apps"] = [asdict(a) for a in self.apps]
         d["disks"] = [asdict(dk) for dk in self.disks]
         return d
+
+    def content_hash(self) -> str:
+        """SHA-1 of visible state — excludes last_seen and internal counters."""
+        payload = {
+            "connected": self.connected,
+            "offline_since": self.offline_since,
+            "version": self.version,
+            "build": self.build,
+            "hostname": self.hostname,
+            "reported_hostname": self.reported_hostname,
+            "uid": self.uid,
+            "door_detected": self.door_detected,
+            "door_color": self.door_color,
+            "win_updates": self.win_updates,
+            "win_pending_restart": self.win_pending_restart,
+            "critical_apps": self.critical_apps,
+            "canvas_enabled": self.canvas_enabled,
+            "canvas_port": self.canvas_port,
+            "display_name": self.display_name,
+            "ip": self.ip,
+            "port": self.port,
+            "group": self.group,
+            "apps": [
+                (a.key, a.name, a.version, a.process, a.status,
+                 a.appid, a.ignore_status, a.startupcmd, a.startupargs)
+                for a in self.apps
+            ],
+            "disks": [(d.label, d.free_bytes, d.total_bytes) for d in self.disks],
+            "upgrade_grace": sorted(
+                (k, v) for k, v in self._upgrade_grace.items() if v > time.time()
+            ),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(raw.encode()).hexdigest()
 
 # ---------------------------------------------------------------------------
 # Protocol helpers
 # ---------------------------------------------------------------------------
 
 FRAME_HEADER = struct.Struct("<III")  # total_len, payload_len, flags
+
+PACKET_GETINVENTORY = '<packet type="getinventory"/>'
+PACKET_DISKSTATUS   = '<packet type="diskstatus"/>'
+PACKET_DOORCONFIG   = '<packet type="getdoorconfig"/>'
+PACKET_REBOOT       = '<packet type="reboot"/>'
 
 def build_frame(xml: str) -> bytes:
     payload = xml.encode("utf-8")
@@ -124,10 +191,6 @@ def make_login_packet() -> str:
         f'</packet>'
     )
 
-PACKET_GETINVENTORY = '<packet type="getinventory"/>'
-PACKET_DISKSTATUS   = '<packet type="diskstatus"/>'
-PACKET_DOORCONFIG   = '<packet type="getdoorconfig"/>'
-
 def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     """Find and parse the XML portion of a frame payload."""
     idx = data.find(b'<packet')
@@ -138,117 +201,254 @@ def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     except ET.ParseError:
         return None
 
+def _apps_snapshot(apps: list) -> tuple:
+    return tuple(
+        (a.key, a.status, a.process, a.version, a.ignore_status, a.appid)
+        for a in apps
+    )
+
+def app_identity(app: AppEntry) -> tuple[str, str]:
+    return (app.name.strip().lower(), app.process.strip().lower())
+
+def identity_key(ident: tuple[str, str]) -> str:
+    return f"{ident[0]}|{ident[1]}"
+
+def _version_sort_key(version: str) -> tuple:
+    """Best-effort sort key for version strings like 12.6_6183."""
+    parts = []
+    for chunk in version.replace("_", ".").split("."):
+        try:
+            parts.append((0, int(chunk)))
+        except ValueError:
+            parts.append((1, chunk))
+    return tuple(parts)
+
+def collapse_inventory_apps(apps: list) -> list[AppEntry]:
+    """One row per logical app (name+process); prefer running, then newest version."""
+    groups: dict[tuple[str, str], list[AppEntry]] = {}
+    for app in apps:
+        groups.setdefault(app_identity(app), []).append(app)
+
+    result: list[AppEntry] = []
+    for group in groups.values():
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+        candidates = [a for a in group if a.status == 2 and not a.ignore_status]
+        pool = candidates if candidates else group
+        result.append(max(pool, key=lambda a: _version_sort_key(a.version)))
+    return result
+
+def migrate_critical_apps(
+    critical_apps: list[str],
+    old_apps: list[AppEntry],
+    new_apps: list[AppEntry],
+) -> tuple[list[str], bool]:
+    """Remap critical-app GUIDs when inventory keys change after an upgrade."""
+    if not critical_apps:
+        return critical_apps, False
+
+    old_by_key = {a.key: a for a in old_apps if a.key}
+    new_by_key = {a.key: a for a in new_apps if a.key}
+    new_by_identity: dict[tuple[str, str], AppEntry] = {}
+    for app in new_apps:
+        ident = app_identity(app)
+        existing = new_by_identity.get(ident)
+        if existing is None or (app.status == 2 and existing.status != 2):
+            new_by_identity[ident] = app
+
+    migrated: list[str] = []
+    seen: set[str] = set()
+    changed = False
+
+    for key in critical_apps:
+        if key in new_by_key:
+            if key not in seen:
+                migrated.append(key)
+                seen.add(key)
+            continue
+
+        old_app = old_by_key.get(key)
+        if old_app is None:
+            changed = True
+            continue
+
+        match = new_by_identity.get(app_identity(old_app))
+        if match and match.key not in seen:
+            migrated.append(match.key)
+            seen.add(match.key)
+            changed = True
+        else:
+            changed = True
+
+    if migrated != critical_apps:
+        changed = True
+    return migrated, changed
+
+def _disks_snapshot(disks: list) -> tuple:
+    return tuple((d.label, d.free_bytes, d.total_bytes) for d in disks)
+
+def _configure_tcp_socket(writer: asyncio.StreamWriter) -> None:
+    sock = writer.get_extra_info("socket")
+    if sock is not None:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+def _loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    exc = context.get("exception")
+    msg = context.get("message", "asyncio error")
+    if exc:
+        log.error("%s", msg, exc_info=exc)
+    else:
+        log.error("asyncio: %s — %s", msg, context)
+
 # ---------------------------------------------------------------------------
 # TCP connection handler per host
 # ---------------------------------------------------------------------------
 
 class XPresMonClient:
-    def __init__(self, state: HostState, bridge: "XPresMonBridge"):
+    def __init__(
+        self,
+        state: HostState,
+        bridge: "XPresMonBridge",
+        *,
+        startup_delay: float = 0.0,
+        keepalive_offset: float = 0.0,
+    ):
         self.state = state
         self.bridge = bridge
+        self._startup_delay = startup_delay
+        self._keepalive_offset = keepalive_offset
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
+        self._command_lock = asyncio.Lock()
+        self._pending_critical_migrated = False
+        self._pending_upgrade_events: list[dict] = []
 
     def start(self):
+        if self._task and not self._task.done():
+            return
         self._running = True
         self._task = asyncio.create_task(self._run_loop(), name=f"xpmon-{self.state.id}")
 
     def stop(self):
         self._running = False
-        if self._task:
+        if self._task and not self._task.done():
             self._task.cancel()
-        if self._writer:
-            try:
-                self._writer.close()
-            except Exception:
-                pass
+        asyncio.create_task(self._close_connection())
+
+    async def force_reconnect(self):
+        """Tear down a stale TCP session so _run_loop reconnects cleanly."""
+        log.warning("[%s] forcing reconnect (watchdog)", self.state.display_name)
+        self.state._miss_count = 0
+        await self._close_connection()
+
+    async def _close_connection(self):
+        self._reader = None
+        writer = self._writer
+        self._writer = None
+        if writer is None or writer.is_closing():
+            return
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
 
     async def _run_loop(self):
+        if self._startup_delay > 0:
+            await asyncio.sleep(self._startup_delay)
+
         delay = RECONNECT_DELAY_MIN
         while self._running:
             try:
                 await self._connect_and_poll()
-                delay = RECONNECT_DELAY_MIN  # reset on clean exit
+                delay = RECONNECT_DELAY_MIN
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.warning(f"[{self.state.display_name}] connection error: {e}")
+                log.warning("[%s] connection error: %s", self.state.display_name, e)
 
             if not self._running:
                 break
 
-            self._mark_offline()
-            log.info(f"[{self.state.display_name}] reconnecting in {delay}s")
+            await self._mark_offline()
+            log.info("[%s] reconnecting in %ss", self.state.display_name, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, RECONNECT_DELAY_MAX)
 
+        await self._close_connection()
+
     async def _connect_and_poll(self):
-        log.info(f"[{self.state.display_name}] connecting to {self.state.ip}:{self.state.port}")
+        log.info("[%s] connecting to %s:%s", self.state.display_name, self.state.ip, self.state.port)
         self._reader, self._writer = await asyncio.wait_for(
             asyncio.open_connection(self.state.ip, self.state.port),
             timeout=10,
         )
+        _configure_tcp_socket(self._writer)
 
-        # Read serverinfo (server sends first)
         pkt = await self._read_packet(timeout=15)
         if pkt is None or pkt.get("type") != "serverinfo":
             raise ConnectionError("Expected serverinfo, got nothing or wrong packet")
-        self._handle_serverinfo(pkt)
+        if self._handle_serverinfo(pkt):
+            await self.bridge.broadcast_host(self.state)
 
-        # Send login
         await self._send(make_login_packet())
-
-        # Send initial query burst
         await self._send(PACKET_GETINVENTORY)
         await self._send(PACKET_DISKSTATUS)
         await self._send(PACKET_DOORCONFIG)
 
-        # Mark connected
         self.state.connected = True
         self.state.offline_since = None
         self.state.last_seen = time.time()
+        self.state._miss_count = 0
         await self.bridge.broadcast_host(self.state)
 
-        # Start keepalive+disk poll task alongside read loop
         keepalive_task = asyncio.create_task(self._keepalive_loop())
         try:
             await self._read_loop()
         finally:
             keepalive_task.cancel()
+            try:
+                await keepalive_task
+            except asyncio.CancelledError:
+                pass
+            await self._close_connection()
 
     async def _read_loop(self):
-        # Timeout is keepalive interval * 3 — if we haven't heard anything in
-        # that window despite sending keepalives, the connection is truly dead.
         read_timeout = KEEPALIVE_INTERVAL * 3
         while self._running:
             pkt = await self._read_packet(timeout=read_timeout)
             if pkt is None:
                 raise ConnectionError("Connection closed by server")
             self.state.last_seen = time.time()
+            if self.state._miss_count > 0:
+                self.state._miss_count = 0
             changed = self._dispatch(pkt)
             if changed:
                 await self.bridge.broadcast_host(self.state)
+            if self._pending_upgrade_events:
+                events = self._pending_upgrade_events
+                self._pending_upgrade_events = []
+                await self.bridge.broadcast_app_upgrades(self.state.id, events)
+            if self._pending_critical_migrated:
+                self._pending_critical_migrated = False
+                await self.bridge.on_critical_apps_migrated(self.state)
 
     async def _keepalive_loop(self):
-        """
-        Send a lightweight keepalive every KEEPALIVE_INTERVAL seconds to
-        prevent the XPression Monitor server from closing the idle connection
-        (~30s server-side idle timeout observed in practice).
+        elapsed = self._keepalive_offset
+        if self._keepalive_offset > 0:
+            await asyncio.sleep(self._keepalive_offset)
 
-        Uses getdoorconfig as the keepalive — it's the smallest request (30
-        bytes) and the server always responds with doorconfig. Every
-        DISK_POLL_INTERVAL seconds, diskstatus is sent instead to refresh
-        disk space data.
-        """
-        elapsed = 0
-        await asyncio.sleep(KEEPALIVE_INTERVAL)
-        elapsed += KEEPALIVE_INTERVAL
         while self._running:
             try:
-                if elapsed >= DISK_POLL_INTERVAL:
-                    await self._send(PACKET_DISKSTATUS)
+                poll_due = elapsed >= DISK_POLL_INTERVAL or elapsed >= INVENTORY_POLL_INTERVAL
+                if poll_due:
+                    if elapsed >= DISK_POLL_INTERVAL:
+                        await self._send(PACKET_DISKSTATUS)
+                    if elapsed >= INVENTORY_POLL_INTERVAL:
+                        await self._send(PACKET_GETINVENTORY)
                     elapsed = 0
                 else:
                     await self._send(PACKET_DOORCONFIG)
@@ -258,7 +458,8 @@ class XPresMonClient:
             elapsed += KEEPALIVE_INTERVAL
 
     async def _read_packet(self, timeout: float = 30) -> Optional[dict]:
-        """Read one framed message. Returns parsed dict or None on EOF."""
+        if self._reader is None:
+            return None
         try:
             header_bytes = await asyncio.wait_for(
                 self._reader.readexactly(12), timeout=timeout
@@ -266,9 +467,8 @@ class XPresMonClient:
         except (asyncio.IncompleteReadError, asyncio.TimeoutError):
             return None
 
-        total_len, payload_len, _ = FRAME_HEADER.unpack(header_bytes)
+        _total_len, payload_len, _ = FRAME_HEADER.unpack(header_bytes)
 
-        # Sanity check — prevent unbounded reads
         if payload_len > 1_048_576 or payload_len == 0:
             raise ConnectionError(f"Implausible payload length: {payload_len}")
 
@@ -291,77 +491,171 @@ class XPresMonClient:
         self._writer.write(build_frame(xml))
         await self._writer.drain()
 
-    def _mark_offline(self):
-        if self.state.connected or self.state.offline_since is None:
-            self.state.connected = False
-            self.state.offline_since = time.time()
-            self.state.apps = []
-            self.state.disks = []
-            asyncio.create_task(self.bridge.broadcast_host(self.state))
+    async def _mark_offline(self):
+        if not self.state.connected and self.state.offline_since is not None:
+            return
+        self.state.connected = False
+        self.state.offline_since = time.time()
+        self.state.apps = []
+        self.state.disks = []
+        self.state._upgrade_grace = {}
+        self.bridge.invalidate_host_hash(self.state.id)
+        await self.bridge.broadcast_host(self.state)
 
-    def _handle_serverinfo(self, pkt: dict):
+    def _handle_serverinfo(self, pkt: dict) -> bool:
         elem: ET.Element = pkt["_elem"]
         ver_raw = (elem.findtext("version") or "").strip()
-        # e.g. "v12.5 build 6127"
         parts = ver_raw.split(" build ")
-        self.state.version = parts[0].lstrip("v") if parts else ver_raw
-        self.state.build   = parts[1] if len(parts) > 1 else ""
-        self.state.hostname          = elem.findtext("hostname") or ""
-        self.state.reported_hostname = elem.findtext("hostname") or ""
-        self.state.uid               = elem.findtext("uid") or ""
-        self.state.door_detected     = pkt.get("doordetected", "0") == "1"
+        new_version = parts[0].lstrip("v") if parts else ver_raw
+        new_build = parts[1] if len(parts) > 1 else ""
+        new_hostname = elem.findtext("hostname") or ""
+        new_uid = elem.findtext("uid") or ""
+        new_door = pkt.get("doordetected", "0") == "1"
+
+        changed = (
+            self.state.version != new_version
+            or self.state.build != new_build
+            or self.state.hostname != new_hostname
+            or self.state.reported_hostname != new_hostname
+            or self.state.uid != new_uid
+            or self.state.door_detected != new_door
+        )
+
+        self.state.version = new_version
+        self.state.build = new_build
+        self.state.hostname = new_hostname
+        self.state.reported_hostname = new_hostname
+        self.state.uid = new_uid
+        self.state.door_detected = new_door
+        return changed
 
     def _dispatch(self, pkt: dict) -> bool:
-        """Handle incoming packet, return True if state changed."""
         ptype = pkt.get("type", "")
         elem: ET.Element = pkt["_elem"]
 
         if ptype == "serverinfo":
-            self._handle_serverinfo(pkt)
-            return True
+            return self._handle_serverinfo(pkt)
 
-        elif ptype == "inventory":
-            apps = []
+        if ptype == "inventory":
+            raw_apps = []
             for app in elem.findall(".//app"):
                 cfg = app.find("config")
-                apps.append(AppEntry(
+                raw_apps.append(AppEntry(
                     key            = app.get("key", ""),
                     name           = app.get("name", ""),
                     version        = app.get("version", ""),
                     folder         = app.get("folder", ""),
                     process        = app.get("process", ""),
+                    startupcmd     = app.get("startupcmd", ""),
+                    startupargs    = app.get("startupargs", ""),
+                    appid          = app.get("appid", ""),
                     status         = int(app.get("status", "0")),
                     heartbeat      = int(app.get("heartbeat", "0")),
                     last_heartbeat = int(app.get("lastHeartbeat", "0")),
                     ignore_status  = cfg is not None and cfg.findtext("ignorestatus") == "1",
                 ))
-            self.state.apps = apps
-            return True
+            return self._apply_inventory(raw_apps)
 
-        elif ptype == "ackdisks":
+        if ptype == "ackdisks":
             disks = []
             for disk in elem.findall("disk"):
                 free  = int(disk.findtext("freespace") or "0")
                 total = int(disk.findtext("totalspace") or "0")
-                if total > 0:  # skip unmounted/zero-size drives
+                if total > 0:
                     disks.append(DiskEntry(
                         label       = disk.findtext("label") or "",
                         free_bytes  = free,
                         total_bytes = total,
                     ))
+            if _disks_snapshot(self.state.disks) == _disks_snapshot(disks):
+                return False
             self.state.disks = disks
             return True
 
-        elif ptype == "doorconfig":
-            self.state.door_color = int(pkt.get("color", "0"))
+        if ptype == "doorconfig":
+            color = int(pkt.get("color", "0"))
+            if color == self.state.door_color:
+                return False
+            self.state.door_color = color
             return True
 
-        elif ptype == "winupdate":
-            self.state.win_updates         = int(pkt.get("updatecount", "0"))
-            self.state.win_pending_restart = pkt.get("pendingrestart", "0") == "1"
+        if ptype == "winupdate":
+            updates = int(pkt.get("updatecount", "0"))
+            pending = pkt.get("pendingrestart", "0") == "1"
+            if updates == self.state.win_updates and pending == self.state.win_pending_restart:
+                return False
+            self.state.win_updates = updates
+            self.state.win_pending_restart = pending
             return True
 
         return False
+
+    def _apply_inventory(self, raw_apps: list[AppEntry]) -> bool:
+        """Collapse duplicates, migrate critical_apps, set upgrade grace."""
+        new_apps = collapse_inventory_apps(raw_apps)
+        old_apps = list(self.state.apps)
+        now = time.time()
+
+        old_by_identity = {app_identity(a): a for a in old_apps}
+        upgrade_events: list[dict] = []
+        grace = {
+            k: v for k, v in self.state._upgrade_grace.items() if v > now
+        }
+
+        for app in new_apps:
+            ident = app_identity(app)
+            old = old_by_identity.get(ident)
+            if old is None:
+                continue
+            if old.key == app.key and old.version == app.version:
+                continue
+
+            grace[identity_key(ident)] = now + APP_UPGRADE_GRACE
+            upgrade_events.append({
+                "name":        app.name,
+                "old_version": old.version,
+                "new_version": app.version,
+            })
+            log.info(
+                "[%s] app upgrade detected: %s %s -> %s (grace %ss)",
+                self.state.display_name, app.name,
+                old.version, app.version, APP_UPGRADE_GRACE,
+            )
+
+        self.state._upgrade_grace = grace
+
+        new_critical, crit_changed = migrate_critical_apps(
+            self.state.critical_apps, old_apps, new_apps,
+        )
+        if crit_changed:
+            old_by_key = {a.key: a for a in old_apps if a.key}
+            new_by_key = {a.key: a for a in new_apps if a.key}
+            for old_key in self.state.critical_apps:
+                if old_key in new_by_key:
+                    continue
+                old_app = old_by_key.get(old_key)
+                if not old_app:
+                    continue
+                match = next(
+                    (a for a in new_apps if app_identity(a) == app_identity(old_app)),
+                    None,
+                )
+                if match:
+                    log.info(
+                        "[%s] migrated critical_app %s -> %s (%s)",
+                        self.state.display_name, old_key, match.key, match.name,
+                    )
+            self.state.critical_apps = new_critical
+            self._pending_critical_migrated = True
+
+        apps_changed = _apps_snapshot(old_apps) != _apps_snapshot(new_apps)
+        if apps_changed:
+            self.state.apps = new_apps
+
+        if upgrade_events:
+            self._pending_upgrade_events = upgrade_events
+
+        return apps_changed or crit_changed or bool(upgrade_events)
 
 # ---------------------------------------------------------------------------
 # Bridge — manages all host clients and WebSocket server
@@ -369,16 +663,17 @@ class XPresMonClient:
 
 class XPresMonBridge:
     def __init__(self):
-        self.hosts: dict[str, HostState] = {}          # id → HostState
-        self.clients: dict[str, XPresMonClient] = {}   # id → client
+        self.hosts: dict[str, HostState] = {}
+        self.clients: dict[str, XPresMonClient] = {}
         self.ws_clients: set[WebSocketServerProtocol] = set()
         self._lock = asyncio.Lock()
+        self._broadcast_hashes: dict[str, str] = {}
 
     # ---- Config loading ----
 
     def load_config(self):
         if not CONFIG_PATH.exists():
-            log.warning(f"Config not found at {CONFIG_PATH}, starting empty")
+            log.warning("Config not found at %s, starting empty", CONFIG_PATH)
             return
         try:
             data = json.loads(CONFIG_PATH.read_text())
@@ -394,11 +689,24 @@ class XPresMonBridge:
                     canvas_port   = h.get("canvas_port", 9056),
                 )
                 self.hosts[state.id] = state
-            log.info(f"Loaded {len(self.hosts)} hosts from config")
+            log.info("Loaded %d hosts from config", len(self.hosts))
         except Exception as e:
-            log.error(f"Failed to load config: {e}")
+            log.error("Failed to load config: %s", e)
+
+    def invalidate_host_hash(self, host_id: str):
+        self._broadcast_hashes.pop(host_id, None)
 
     # ---- Host management ----
+
+    def _make_client(self, state: HostState, *, stagger: bool = False) -> XPresMonClient:
+        startup_delay = random.uniform(0, STARTUP_STAGGER_MAX) if stagger else 0.0
+        keepalive_offset = random.uniform(0, KEEPALIVE_INTERVAL)
+        return XPresMonClient(
+            state,
+            self,
+            startup_delay=startup_delay,
+            keepalive_offset=keepalive_offset,
+        )
 
     async def add_host(self, host_def: dict) -> HostState:
         async with self._lock:
@@ -411,7 +719,7 @@ class XPresMonBridge:
                 group        = host_def.get("group", "Ungrouped"),
             )
             self.hosts[hid] = state
-            client = XPresMonClient(state, self)
+            client = self._make_client(state, stagger=False)
             self.clients[hid] = client
             client.start()
             await self._save_config()
@@ -425,6 +733,7 @@ class XPresMonBridge:
                 self.clients[host_id].stop()
                 del self.clients[host_id]
             del self.hosts[host_id]
+            self._broadcast_hashes.pop(host_id, None)
             await self._save_config()
             await self.broadcast({"type": "host_removed", "id": host_id})
             return True
@@ -445,29 +754,32 @@ class XPresMonBridge:
                 for h in self.hosts.values()
             ]
         }
-        CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        tmp = CONFIG_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.replace(tmp, CONFIG_PATH)
 
     # ---- WebSocket ----
 
     async def ws_handler(self, websocket: WebSocketServerProtocol):
         self.ws_clients.add(websocket)
-        log.info(f"WS client connected ({len(self.ws_clients)} total)")
+        log.info("WS client connected (%d total)", len(self.ws_clients))
         try:
-            # Send full state snapshot on connect
             snapshot = {
                 "type":  "snapshot",
                 "hosts": [h.to_dict() for h in self.hosts.values()],
             }
             await websocket.send(json.dumps(snapshot))
 
-            # Handle incoming control messages from the browser
             async for raw in websocket:
+                if len(raw) > WS_MAX_MESSAGE_SIZE:
+                    log.warning("WS message too large (%d bytes), ignoring", len(raw))
+                    continue
                 await self._handle_ws_message(raw, websocket)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             self.ws_clients.discard(websocket)
-            log.info(f"WS client disconnected ({len(self.ws_clients)} total)")
+            log.info("WS client disconnected (%d total)", len(self.ws_clients))
 
     async def _handle_ws_message(self, raw: str, ws: WebSocketServerProtocol):
         try:
@@ -500,10 +812,9 @@ class XPresMonBridge:
             if hid in self.hosts:
                 self.hosts[hid].critical_apps = msg.get("critical_apps", [])
                 await self._save_config()
-                # Confirm back to all clients so every browser tab updates
                 await self.broadcast({
-                    "type":         "alerts_updated",
-                    "id":           hid,
+                    "type":          "alerts_updated",
+                    "id":            hid,
                     "critical_apps": self.hosts[hid].critical_apps,
                 })
 
@@ -511,27 +822,102 @@ class XPresMonBridge:
             hid = msg.get("id")
             if hid in self.hosts:
                 h = self.hosts[hid]
-                h.display_name  = msg.get("display_name", h.display_name)
-                h.group         = msg.get("group", h.group)
-                h.canvas_enabled= bool(msg.get("canvas_enabled", h.canvas_enabled))
-                h.canvas_port   = int(msg.get("canvas_port", h.canvas_port) or 9056)
-                # IP/port changes require reconnect
+                h.display_name   = msg.get("display_name", h.display_name)
+                h.group          = msg.get("group", h.group)
+                h.canvas_enabled = bool(msg.get("canvas_enabled", h.canvas_enabled))
+                h.canvas_port    = int(msg.get("canvas_port", h.canvas_port) or 9056)
                 new_ip   = msg.get("ip", h.ip)
                 new_port = int(msg.get("port", h.port) or 9875)
                 if new_ip != h.ip or new_port != h.port:
-                    h.ip   = new_ip
+                    h.ip = new_ip
                     h.port = new_port
-                    # Reconnect the client with the new address
                     if hid in self.clients:
                         self.clients[hid].stop()
-                        client = XPresMonClient(h, self)
+                        client = self._make_client(h, stagger=False)
                         self.clients[hid] = client
                         client.start()
                 await self._save_config()
                 await self.broadcast_host(h)
 
+        elif action == "host_command":
+            await self._handle_host_command(msg, ws)
+
+    async def _handle_host_command(self, msg: dict, ws: WebSocketServerProtocol):
+        hid     = msg.get("id")
+        command = msg.get("command")
+
+        if hid not in self.hosts or hid not in self.clients:
+            await ws.send(json.dumps({
+                "type": "command_result", "id": hid, "command": command,
+                "ok": False, "error": "Host not found or not connected",
+            }))
+            return
+
+        state  = self.hosts[hid]
+        client = self.clients[hid]
+
+        if not state.connected:
+            await ws.send(json.dumps({
+                "type": "command_result", "id": hid, "command": command,
+                "ok": False, "error": "Host is offline",
+            }))
+            return
+
+        async with client._command_lock:
+            try:
+                if command == "reboot":
+                    await client._send(PACKET_REBOOT)
+                    log.info("[%s] REBOOT sent", state.display_name)
+
+                elif command == "stop":
+                    killed = 0
+                    for app in state.apps:
+                        if app.name in STOP_EXCLUDE_NAMES:
+                            continue
+                        if app.appid and app.status == 2 and not app.ignore_status:
+                            pkt = f'<packet type="kill" appid="{app.appid}"/>'
+                            await client._send(pkt)
+                            killed += 1
+                    log.info("[%s] STOP ALL sent (%d kill packets)", state.display_name, killed)
+
+                elif command == "start":
+                    app_entries = []
+                    for app in state.apps:
+                        if app.status != 2 and not app.ignore_status and app.startupcmd:
+                            cmd  = app.startupcmd.replace("&", "&amp;").replace('"', "&quot;")
+                            args = (app.startupargs or "").replace("&", "&amp;").replace('"', "&quot;")
+                            app_entries.append(f'  <app cmd="{cmd}" args="{args}"/>')
+                    if app_entries:
+                        apps_xml = "\r\n".join(app_entries)
+                        pkt = (
+                            f'<packet type="start">\r\n<apps>\r\n{apps_xml}\r\n'
+                            f'</apps>\r\n</packet>'
+                        )
+                        await client._send(pkt)
+                        log.info("[%s] START ALL sent (%d apps)", state.display_name, len(app_entries))
+                    else:
+                        log.info("[%s] START ALL: no stopped apps to start", state.display_name)
+
+                else:
+                    await ws.send(json.dumps({
+                        "type": "command_result", "id": hid, "command": command,
+                        "ok": False, "error": f"Unknown command: {command}",
+                    }))
+                    return
+
+                await client._send(PACKET_GETINVENTORY)
+                await ws.send(json.dumps({
+                    "type": "command_result", "id": hid, "command": command, "ok": True,
+                }))
+
+            except Exception as e:
+                log.error("[%s] command %s failed: %s", state.display_name, command, e)
+                await ws.send(json.dumps({
+                    "type": "command_result", "id": hid, "command": command,
+                    "ok": False, "error": str(e),
+                }))
+
     async def _import_xcl(self, xml_str: str) -> int:
-        """Parse XCL XML and add any hosts not already tracked by IP."""
         existing_ips = {h.ip for h in self.hosts.values()}
         added = 0
         try:
@@ -551,79 +937,143 @@ class XPresMonBridge:
                 existing_ips.add(ip)
                 added += 1
         except ET.ParseError as e:
-            log.error(f"XCL parse error: {e}")
+            log.error("XCL parse error: %s", e)
         return added
 
     async def broadcast(self, msg: dict):
         if not self.ws_clients:
             return
         data = json.dumps(msg)
-        await asyncio.gather(
-            *[ws.send(data) for ws in list(self.ws_clients)],
-            return_exceptions=True,
-        )
+        dead = []
+        for ws in list(self.ws_clients):
+            try:
+                await ws.send(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.ws_clients.discard(ws)
 
     async def broadcast_host(self, state: HostState):
+        h = state.content_hash()
+        if self._broadcast_hashes.get(state.id) == h:
+            return
+        self._broadcast_hashes[state.id] = h
         await self.broadcast({"type": "host_update", "host": state.to_dict()})
 
-    # ---- Offline watchdog ----
+    async def on_critical_apps_migrated(self, state: HostState):
+        await self._save_config()
+        await self.broadcast({
+            "type":          "alerts_updated",
+            "id":            state.id,
+            "critical_apps": state.critical_apps,
+            "silent":        True,
+        })
+
+    async def broadcast_app_upgrades(self, host_id: str, events: list[dict]):
+        if not events:
+            return
+        host = self.hosts.get(host_id)
+        await self.broadcast({
+            "type":    "app_upgraded",
+            "id":      host_id,
+            "host":    host.display_name if host else host_id,
+            "changes": events,
+        })
+
+    # ---- Supervision ----
 
     async def _offline_watchdog(self):
-        """
-        Periodically check for hosts that have gone silent.
-        A host must miss OFFLINE_MISS_LIMIT consecutive checks before being
-        marked offline. Each check window is OFFLINE_GRACE seconds.
-        This prevents false alarms during brief network hiccups or upgrades.
-        """
         while True:
             await asyncio.sleep(OFFLINE_GRACE)
             now = time.time()
-            for state in self.hosts.values():
-                if state.connected and state.last_seen > 0:
-                    if now - state.last_seen > OFFLINE_GRACE:
-                        state._miss_count += 1
-                        log.warning(
-                            f"[{state.display_name}] silent for {OFFLINE_GRACE}s "
-                            f"(miss {state._miss_count}/{OFFLINE_MISS_LIMIT})"
-                        )
-                        if state._miss_count >= OFFLINE_MISS_LIMIT:
-                            log.warning(f"[{state.display_name}] marking OFFLINE after {OFFLINE_MISS_LIMIT} misses")
-                            state.connected = False
-                            state.offline_since = now
-                            state._miss_count = 0
-                            await self.broadcast_host(state)
-                    else:
-                        # Host is responding — reset miss counter
-                        if state._miss_count > 0:
-                            log.info(f"[{state.display_name}] recovered, resetting miss counter")
-                            state._miss_count = 0
+            for hid, state in list(self.hosts.items()):
+                if not state.connected or state.last_seen <= 0:
+                    continue
+                if now - state.last_seen <= OFFLINE_GRACE:
+                    if state._miss_count > 0:
+                        log.info("[%s] recovered, resetting miss counter", state.display_name)
+                        state._miss_count = 0
+                    continue
+
+                state._miss_count += 1
+                log.warning(
+                    "[%s] silent for %ss (miss %d/%d)",
+                    state.display_name, OFFLINE_GRACE,
+                    state._miss_count, OFFLINE_MISS_LIMIT,
+                )
+                if state._miss_count >= OFFLINE_MISS_LIMIT:
+                    client = self.clients.get(hid)
+                    if client:
+                        await client.force_reconnect()
+
+    async def _task_supervisor(self):
+        while True:
+            await asyncio.sleep(TASK_SUPERVISOR_INTERVAL)
+            for _hid, client in list(self.clients.items()):
+                if not client._running:
+                    continue
+                task = client._task
+                if task is None or not task.done():
+                    continue
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc:
+                    log.error("[%s] host task died: %s", client.state.display_name, exc)
+                else:
+                    log.warning(
+                        "[%s] host task exited unexpectedly, restarting",
+                        client.state.display_name,
+                    )
+                client.start()
+
+    async def _health_log(self):
+        while True:
+            await asyncio.sleep(HEALTH_LOG_INTERVAL)
+            connected = sum(1 for h in self.hosts.values() if h.connected)
+            log.info(
+                "health: %d/%d hosts connected, %d ws clients",
+                connected, len(self.hosts), len(self.ws_clients),
+            )
 
     # ---- Main entry ----
 
     async def run(self):
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(_loop_exception_handler)
+
         self.load_config()
 
-        # Start a client for each loaded host
-        for hid, state in self.hosts.items():
-            client = XPresMonClient(state, self)
-            self.clients[hid] = client
+        for state in self.hosts.values():
+            client = self._make_client(state, stagger=True)
+            self.clients[state.id] = client
             client.start()
 
-        # Start offline watchdog
-        asyncio.create_task(self._offline_watchdog())
+        asyncio.create_task(self._offline_watchdog(), name="offline-watchdog")
+        asyncio.create_task(self._task_supervisor(), name="task-supervisor")
+        asyncio.create_task(self._health_log(), name="health-log")
 
-        log.info(f"WebSocket server starting on ws://{WS_HOST}:{WS_PORT}")
-        ws_server = await websockets.serve(self.ws_handler, WS_HOST, WS_PORT)
+        log.info("WebSocket server starting on ws://%s:%s", WS_HOST, WS_PORT)
+        ws_server = await websockets.serve(
+            self.ws_handler,
+            WS_HOST,
+            WS_PORT,
+            ping_interval=WS_PING_INTERVAL,
+            ping_timeout=WS_PING_TIMEOUT,
+            max_size=WS_MAX_MESSAGE_SIZE,
+        )
         self._ws_server = ws_server
 
-        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(
-                sig,
-                lambda: asyncio.create_task(_shutdown(self, ws_server))
-            )
+            try:
+                loop.add_signal_handler(
+                    sig,
+                    lambda s=sig: asyncio.create_task(_shutdown(self, ws_server)),
+                )
+            except NotImplementedError:
+                pass
 
-        await asyncio.Future()  # run until signal
+        await asyncio.Future()
 
 
 # ---------------------------------------------------------------------------
@@ -635,28 +1085,20 @@ async def main():
     await bridge.run()
 
 async def _shutdown(bridge: XPresMonBridge, ws_server):
-    """
-    Fast clean shutdown — stop all host tasks immediately, force-close all
-    WebSocket connections without waiting for graceful handshakes, then exit.
-    systemctl stop now returns in <2s instead of waiting 30s for WS timeout.
-    """
     log.info("Shutting down (fast)...")
 
-    # Stop all XPression TCP client tasks
     for client in bridge.clients.values():
         client.stop()
 
-    # Force-close all open WebSocket connections immediately
     if bridge.ws_clients:
         await asyncio.gather(
             *[ws.close() for ws in list(bridge.ws_clients)],
             return_exceptions=True,
         )
 
-    # Close the WS server and stop the event loop
     ws_server.close()
     await ws_server.wait_closed()
-    asyncio.get_event_loop().stop()
+    asyncio.get_running_loop().stop()
 
 if __name__ == "__main__":
     asyncio.run(main())

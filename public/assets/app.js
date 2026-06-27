@@ -29,6 +29,10 @@ const activeAlerts = new Map();
 /** Set to true after first snapshot — suppresses alerts on initial load */
 let initialLoadDone = false;
 
+/** Re-evaluate alerts periodically so upgrade grace expiry is detected */
+let alertRecheckTimer = null;
+const ALERT_RECHECK_MS = 5000;
+
 let ws = null;
 let wsReconnectTimer = null;
 let wsReconnectDelay = 2000;
@@ -98,6 +102,41 @@ document.addEventListener('click', () => {
 // Alert logic
 // ---------------------------------------------------------------------------
 
+/** Stable identity for a logical app across GUID/version changes (matches bridge). */
+function appIdentity(app) {
+  const name = (app.name || '').trim().toLowerCase();
+  const proc = (app.process || '').trim().toLowerCase();
+  return `${name}|${proc}`;
+}
+
+function isInUpgradeGrace(host, app) {
+  const grace = host.upgrade_grace || {};
+  const until = grace[appIdentity(app)];
+  return until && until > Date.now() / 1000;
+}
+
+/** Remove alert entries for app GUIDs no longer in inventory. */
+function reconcileActiveAlerts(host) {
+  const validKeys = new Set((host.apps || []).map(a => a.key));
+  for (const key of [...activeAlerts.keys()]) {
+    if (!key.startsWith(`app:${host.id}:`)) continue;
+    const appKey = key.slice(`app:${host.id}:`.length);
+    if (!validKeys.has(appKey)) {
+      activeAlerts.delete(key);
+    }
+  }
+}
+
+function startAlertRecheck() {
+  if (alertRecheckTimer) return;
+  alertRecheckTimer = setInterval(() => {
+    if (!initialLoadDone) return;
+    for (const host of hosts.values()) {
+      evaluateAlerts(host, host);
+    }
+  }, ALERT_RECHECK_MS);
+}
+
 /**
  * Evaluate a host's state for alert conditions.
  * Fires sound + flash on new faults. Clears flash when fault resolves.
@@ -105,6 +144,8 @@ document.addEventListener('click', () => {
  */
 function evaluateAlerts(host, previousHost) {
   if (!initialLoadDone) return;
+
+  reconcileActiveAlerts(host);
 
   const criticalApps = new Set(host.critical_apps || []);
 
@@ -126,6 +167,8 @@ function evaluateAlerts(host, previousHost) {
   if (host.connected && criticalApps.size > 0) {
     for (const app of (host.apps || [])) {
       if (!criticalApps.has(app.key)) continue;
+      if (isInUpgradeGrace(host, app)) continue;
+
       const appKey = `app:${host.id}:${app.key}`;
       const isFaulted = app.status !== 2 && !app.ignore_status;
       if (isFaulted) {
@@ -136,7 +179,6 @@ function evaluateAlerts(host, previousHost) {
       } else {
         if (activeAlerts.has(appKey)) {
           activeAlerts.delete(appKey);
-          // Only clear flash if no other alerts remain for this host
           if (!hostHasActiveAlert(host.id)) clearFlash(host.id);
         }
       }
@@ -233,7 +275,10 @@ function handleMessage(msg) {
       hideSplash();
       // Mark load done after a short delay so any immediate updates
       // that arrive right after snapshot don't false-alarm
-      setTimeout(() => { initialLoadDone = true; }, 2000);
+      setTimeout(() => {
+        initialLoadDone = true;
+        startAlertRecheck();
+      }, 2000);
       break;
 
     case 'host_update': {
@@ -277,11 +322,23 @@ function handleMessage(msg) {
       break;
 
     case 'alerts_updated':
-      // Bridge confirmed critical_apps saved — update local state
       if (hosts.has(msg.id)) {
         hosts.get(msg.id).critical_apps = msg.critical_apps;
+        scheduleRender(msg.id);
       }
-      toast('success', 'Alert configuration saved');
+      if (!msg.silent) {
+        toast('success', 'Alert configuration saved');
+      }
+      break;
+
+    case 'app_upgraded':
+      if (msg.changes && msg.changes.length > 0) {
+        for (const ch of msg.changes) {
+          const from = ch.old_version ? ` ${ch.old_version}` : '';
+          const to = ch.new_version ? ` → ${ch.new_version}` : '';
+          toast('info', `${msg.host}: ${ch.name}${from}${to}`, 6000);
+        }
+      }
       break;
   }
 }
@@ -408,7 +465,7 @@ function buildHostCard(host, expanded) {
     <div class="card-body">
       ${buildDiskSection(host.disks)}
       ${buildCanvasSection(host)}
-      ${buildAppSection(host.apps, criticalApps)}
+      ${buildAppSection(host.apps, criticalApps, host.upgrade_grace)}
       <div class="card-footer">
         <button class="btn btn-sm btn-secondary" data-action="edit">✎ Edit</button>
         <button class="btn btn-sm btn-success btn-cmd" data-action="start">▶ Start All</button>
@@ -477,7 +534,7 @@ function buildDiskSection(disks) {
     </div>`;
 }
 
-function buildAppSection(apps, criticalApps) {
+function buildAppSection(apps, criticalApps, upgradeGrace) {
   if (!apps || apps.length === 0) return '';
 
   const rows = apps.map(app => {
@@ -493,13 +550,20 @@ function buildAppSection(apps, criticalApps) {
       stateLabel = 'Not running';
     }
     const isCritical = criticalApps && criticalApps.has(app.key);
+    const upgrading = isInUpgradeGrace({ upgrade_grace: upgradeGrace || {} }, app);
+    const stateLabelFinal = upgrading && stateClass === 'app-stopped'
+      ? 'Updating…'
+      : stateLabel;
+    const stateClassFinal = upgrading && stateClass === 'app-stopped'
+      ? 'app-upgrading'
+      : stateClass;
     return `
-      <li class="app-row ${stateClass} ${isCritical ? 'app-critical' : ''}">
+      <li class="app-row ${stateClassFinal} ${isCritical ? 'app-critical' : ''}">
         <span class="app-status-dot"></span>
         ${isCritical ? '<span class="app-critical-icon" title="Critical — alerts enabled">🔔</span>' : ''}
         <span class="app-name" title="${esc(app.name)}">${esc(app.name)}</span>
         <span class="app-version">${esc(app.version)}</span>
-        <span class="app-state-label">${stateLabel}</span>
+        <span class="app-state-label">${stateLabelFinal}</span>
       </li>`;
   }).join('');
 
