@@ -82,7 +82,7 @@ $user = session_user_payload_full();
 
   <section class="admin-section">
     <h2>LDAP Groups</h2>
-    <p class="hint">Users in these AD groups can sign in without a pre-created account. Match by group CN or full DN.</p>
+    <p class="hint">Users in these AD groups can sign in without a pre-created account. Match by group CN or full DN. Hover each role in the list for a description — use <strong>Operator+Reboot</strong> when AD members need reboot, not plain <strong>Operator</strong>.</p>
     <div class="admin-inline-form">
       <input type="text" id="newGroupName" placeholder="Group name (e.g. XPMon-Operators)">
       <select id="newGroupRoles" multiple size="3" title="Hover each role in the list for a description"></select>
@@ -199,7 +199,7 @@ $user = session_user_payload_full();
         <span>Account enabled</span>
       </label>
       <div class="edit-section-title">Roles</div>
-      <p class="hint">Hover a role name for a summary of what it allows.</p>
+      <p class="hint">Hover a role name for a summary of what it allows. <strong>Operator</strong> is Start/Stop only; <strong>Operator+Reboot</strong> adds Reboot.</p>
       <div id="userRolesCheckboxes" class="checkbox-grid"></div>
       <div class="edit-section-title">Permission overrides</div>
       <p class="hint"><strong>Role default</strong> uses the selected roles. <strong>Grant</strong> forces allow; <strong>Deny</strong> forces block — even when roles disagree. Hover each permission for details.</p>

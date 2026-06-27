@@ -133,13 +133,14 @@ sudo chmod 750 /opt/xpmon-web/data
 | Role | Dashboard | XCL export | Bridge log | Bridge control | Host mgmt | Host commands |
 |------|-----------|------------|------------|----------------|-----------|---------------|
 | admin | ✓ | ✓ | ✓ | ✓ | ✓ | view + start/stop + reboot |
-| operator | ✓ | | | | | view + start/stop + reboot |
+| operator | ✓ | | | | | view + start/stop |
+| operator_reboot | ✓ | | | | | view + start/stop + reboot |
 | control_viewer | ✓ | | | | | view only |
 | bridge_monitor | ✓ | | ✓ | | | |
 | viewer | ✓ | | | | | |
 | kiosk | ✓ (wall display) | | | | | |
 
-Host command permissions are split: **Execute Start/Stop Services** and **Execute Reboot** can be granted independently via role or per-user overrides in Admin.
+Host command permissions are split: **Execute Start/Stop Services** and **Execute Reboot** can be granted independently via role or per-user overrides in Admin. Use **Operator** for start/stop only, or **Operator+Reboot** when reboot is required. Users previously assigned **operator** for reboot access should be moved to **operator_reboot** after upgrading.
 
 Users can hold multiple roles (permissions are combined). Configure users and LDAP in **Admin** after signing in.
 

@@ -77,7 +77,22 @@ const DEFAULT_ROLES = [
     ],
     'operator' => [
         'label' => 'Operator',
-        'description' => 'Dashboard plus Start All, Stop All, and Reboot on hosts. Cannot edit hosts, manage the bridge, export XCL, or administer users.',
+        'description' => 'Dashboard plus Start All and Stop All on hosts. Reboot is not included — use Operator+Reboot for that. Cannot edit hosts, manage the bridge, export XCL, or administer users.',
+        'permissions' => [
+            'dashboard' => true,
+            'xcl_export' => false,
+            'bridge_view' => false,
+            'bridge_control' => false,
+            'manage_hosts' => false,
+            'view_host_commands' => true,
+            'execute_service_commands' => true,
+            'execute_reboot' => false,
+            'manage_users' => false,
+        ],
+    ],
+    'operator_reboot' => [
+        'label' => 'Operator+Reboot',
+        'description' => 'Same as Operator (Start All and Stop All) plus Reboot on hosts. Cannot edit hosts, manage the bridge, export XCL, or administer users.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,

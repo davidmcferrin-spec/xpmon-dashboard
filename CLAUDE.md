@@ -185,6 +185,22 @@ www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart xpmon-bridge
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active xpmon-bridge
 ```
 
+## Built-in roles
+
+Defined in `public/includes/auth.php` as `DEFAULT_ROLES`. Permissions from multiple roles are combined (OR). Hover role names in Admin for full descriptions.
+
+| Role ID | Label | Host commands |
+|---------|-------|---------------|
+| `admin` | Administrator | view + start/stop + reboot (+ full admin) |
+| `operator` | Operator | view + start/stop only |
+| `operator_reboot` | Operator+Reboot | view + start/stop + reboot |
+| `control_viewer` | Control Viewer | view only (buttons shown, disabled) |
+| `bridge_monitor` | Bridge Monitor | none (bridge log only) |
+| `viewer` | Viewer | none |
+| `kiosk` | Kiosk | none (wall display, no idle timeout) |
+
+Per-user **permission overrides** can grant or deny individual permissions regardless of role.
+
 ## Open TODO items
 
 - **WebSocket token auth** — PHP issues HMAC token; bridge validates on connect (control plane currently unauthenticated)
