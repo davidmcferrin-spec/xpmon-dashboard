@@ -53,6 +53,7 @@ $isKiosk = !empty($user['is_kiosk']);
     <?php endif; ?>
     <?php if ($canAdmin): ?>
     <a href="admin.php" class="btn btn-sm btn-secondary">Admin</a>
+    <a href="audit.php" class="btn btn-sm btn-secondary">Audit</a>
     <?php endif; ?>
     <?php if ($canManageHosts): ?>
     <button class="btn btn-sm" id="btnAddHost">+ Add Host</button>

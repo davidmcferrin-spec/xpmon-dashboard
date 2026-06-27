@@ -152,6 +152,8 @@ LDAP uses LDAPS with user bind. Type only your sAMAccountName at login; set bind
 
 **Note:** WebSocket (`:8765`) is not authenticated — UI and PHP endpoints enforce access. Restrict port 8765 at the firewall to trusted subnets.
 
+**Audit log:** Host commands (start/stop/reboot) and bridge service control (start/stop/restart) are recorded in `data/audit.jsonl` with username, client IP, target host, and result. View under **Admin → Audit Log** (administrators only). The log rotates automatically at 10 MB. Ensure `www-data` can write to `/opt/xpmon-web/data/`.
+
 ### 7. Sudoers for bridge admin page
 
 ```bash

@@ -24,6 +24,9 @@ public/bridge.php               Bridge admin page (log tail, start/stop/restart)
 public/log.php                  AJAX backend for bridge admin
 public/xcl.php                  XCL export — generates StatusClientList.xcl from config.json
 public/includes/auth.php        Session auth, roles, LDAP, user prefs
+public/includes/audit.php       Append-only audit log helper
+public/audit.php                Audit log viewer (administrators)
+public/api/audit.php            Audit log read/write API
 public/api/profile.php          User profile preferences API
 data/auth.json                  Users, LDAP config (not in git)
 ```
@@ -34,6 +37,7 @@ data/auth.json                  Users, LDAP config (not in git)
 - **Frontend:** PHP 8.2 / Apache, vanilla JS (no framework), CSS variables for theming
 - **Persistence:** `public/config.json` (flat JSON, rewritten by bridge on changes; blocked from web via `.htaccess`)
 - **Auth:** `data/auth.json` (local + LDAP, role-based permissions)
+- **Audit:** `data/audit.jsonl` (append-only command audit; not in git)
 - **Service management:** systemd (`xpmon-bridge.service`)
 - **Deployment path:** `/opt/xpmon-web/`
 - **GitHub:** davidmcferrin-spec/xpmon-dashboard
@@ -200,6 +204,20 @@ Defined in `public/includes/auth.php` as `DEFAULT_ROLES`. Permissions from multi
 | `kiosk` | Kiosk | none (wall display, no idle timeout) |
 
 Per-user **permission overrides** can grant or deny individual permissions regardless of role.
+
+## Audit log
+
+Append-only JSONL at `data/audit.jsonl`. Written by PHP when:
+
+| Action | Trigger | Fields |
+|--------|---------|--------|
+| `host_command` | User confirms Start/Stop/Reboot (server permission check before WS send) | user, IP, command, host id/name/ip |
+| `host_command_result` | Bridge `command_result` WS message | ok, error |
+| `bridge_control` | `log.php` systemd start/stop/restart | command, ok |
+
+View: **Audit Log** page (`manage_users` permission). Rotates at 10 MB.
+
+Host commands are blocked if the audit write fails (compliance). WebSocket remains unauthenticated — see open TODO for token auth.
 
 ## Open TODO items
 

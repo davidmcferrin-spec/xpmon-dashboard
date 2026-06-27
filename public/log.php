@@ -9,6 +9,7 @@
  */
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/audit.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -60,6 +61,12 @@ if ($action === 'log') {
     $cmd    = 'sudo /usr/bin/systemctl ' . $action . ' xpmon-bridge 2>&1';
     $output = [];
     exec($cmd, $output, $rc);
+
+    audit_log('bridge_control', [
+        'command' => $action,
+        'output' => implode("\n", array_slice($output, 0, 5)),
+    ], $rc === 0);
+
     echo json_encode([
         'ok'     => $rc === 0,
         'action' => $action,

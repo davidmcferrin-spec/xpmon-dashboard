@@ -354,17 +354,56 @@ function wsSend(obj) {
     if (obj.action === 'host_command') {
       if (!canExecuteCommand(obj.command)) {
         toast('error', 'You do not have permission for that command');
-        return;
+        return false;
       }
     } else {
       const required = WS_GUARDED_ACTIONS[obj.action];
       if (required && !can(required)) {
         toast('error', 'You do not have permission for that action');
-        return;
+        return false;
       }
     }
     ws.send(JSON.stringify(obj));
+    return true;
   }
+  return false;
+}
+
+async function postAuditEvent(payload) {
+  try {
+    const r = await fetch('api/audit.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    return d.ok === true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function auditHostCommand(command, hostId, hostName, hostIp) {
+  return postAuditEvent({
+    event: 'host_command',
+    command,
+    host_id: hostId,
+    host_name: hostName,
+    host_ip: hostIp,
+  });
+}
+
+async function auditHostCommandResult(msg) {
+  const host = hosts.get(msg.id);
+  return postAuditEvent({
+    event: 'host_command_result',
+    command: msg.command,
+    host_id: msg.id,
+    host_name: host?.display_name ?? '',
+    host_ip: host?.ip ?? '',
+    ok: !!msg.ok,
+    error: msg.error ?? null,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -910,14 +949,33 @@ function openCommandModal(hostId, hostName, command) {
   openModal('modalCommand');
 }
 
-document.getElementById('btnCmdConfirm')?.addEventListener('click', () => {
+document.getElementById('btnCmdConfirm')?.addEventListener('click', async () => {
   if (!pendingCommand) return;
-  wsSend({ action: 'host_command', id: pendingCommand.id, command: pendingCommand.command });
-  const card = document.getElementById(`host-${pendingCommand.id}`);
+  const { id, name, command } = pendingCommand;
+  const host = hosts.get(id);
+  const hostIp = host?.ip ?? '';
+
+  const audited = await auditHostCommand(command, id, name, hostIp);
+  if (!audited) {
+    toast('error', 'Could not record audit log — command not sent');
+    return;
+  }
+
+  if (!wsSend({ action: 'host_command', id, command })) {
+    toast('error', 'Not connected to bridge — command not sent');
+    await auditHostCommandResult({
+      id, command, ok: false, error: 'WebSocket not connected',
+    });
+    pendingCommand = null;
+    closeModal('modalCommand');
+    return;
+  }
+
+  const card = document.getElementById(`host-${id}`);
   if (card) {
     card.querySelectorAll('.btn-cmd').forEach(b => { b.disabled = true; });
     setTimeout(() => {
-      const c = document.getElementById(`host-${pendingCommand.id}`);
+      const c = document.getElementById(`host-${id}`);
       if (c) c.querySelectorAll('.btn-cmd').forEach(b => { b.disabled = false; });
     }, 3000);
   }
@@ -926,6 +984,7 @@ document.getElementById('btnCmdConfirm')?.addEventListener('click', () => {
 });
 
 function handleCommandResult(msg) {
+  auditHostCommandResult(msg);
   if (msg.ok) {
     toast('success', `${COMMAND_LABELS[msg.command]?.label ?? msg.command} sent to ${hosts.get(msg.id)?.display_name ?? msg.id}`);
   } else {

@@ -19,6 +19,7 @@ $user = session_user_payload_full();
     <span class="topbar-logo"><a href="index.php" style="text-decoration:none;color:inherit">XP<span class="accent">MON</span></a></span>
     <nav class="topbar-nav">
       <a href="index.php" class="btn btn-sm btn-secondary">← Dashboard</a>
+      <a href="audit.php" class="btn btn-sm btn-secondary">Audit Log</a>
       <span class="btn btn-sm" style="cursor:default;opacity:0.6">Admin</span>
     </nav>
   </div>

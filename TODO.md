@@ -36,3 +36,6 @@
 
 ## [DONE] Bridge 24/7 robustness — content_hash diff broadcast, watchdog,
 ##     task supervisor, upgrade grace, atomic config save, staggered keepalive
+
+## [DONE] Audit log — host commands + bridge control; username, IP, result;
+##     audit.jsonl, Audit Log page, server-side permission check on write
