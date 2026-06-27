@@ -1,15 +1,9 @@
 <?php
 /**
  * index.php — XPression Monitor Web Dashboard
- * Serves the single-page dashboard. The JS connects directly to the
- * Python WebSocket bridge at ws://<host>:8765.
  */
-
-// WS bridge address — browser connects to this directly.
-// If the dashboard is served from a different host than the bridge,
-// set XPMON_WS_HOST to the bridge server's IP/hostname.
 $ws_host = getenv('XPMON_WS_HOST') ?: $_SERVER['HTTP_HOST'];
-$ws_host = preg_replace('/:\d+$/', '', $ws_host); // strip any port
+$ws_host = preg_replace('/:\d+$/', '', $ws_host);
 $ws_url  = "ws://{$ws_host}:8765";
 ?>
 <!DOCTYPE html>
@@ -32,6 +26,7 @@ $ws_url  = "ws://{$ws_host}:8765";
       <span class="ws-dot"></span>
       <span class="ws-label">Connecting…</span>
     </span>
+    <a href="bridge.php" class="btn btn-sm btn-secondary">⚙ Bridge</a>
     <button class="btn btn-sm" id="btnAddHost">+ Add Host</button>
     <button class="btn btn-sm btn-secondary" id="btnImport">Import XCL</button>
   </div>
@@ -112,6 +107,65 @@ $ws_url  = "ws://{$ws_host}:8765";
   </div>
 </div>
 
+<!-- Host Command Confirmation Modal -->
+<div class="modal-overlay" id="modalCommand" hidden>
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2 id="cmdModalTitle">Confirm Action</h2>
+      <button class="modal-close" data-modal="modalCommand">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="cmdModalBody"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="btnCmdConfirm">Confirm</button>
+      <button class="btn btn-secondary" data-modal="modalCommand">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Host Modal -->
+<div class="modal-overlay" id="modalEditHost" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Edit Host</h2>
+      <button class="modal-close" data-modal="modalEditHost">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editHostId">
+      <label>Display Name
+        <input type="text" id="editName" placeholder="NN Project Server Primary">
+      </label>
+      <label>IP Address
+        <input type="text" id="editIp" placeholder="10.70.4.84">
+      </label>
+      <label>Port
+        <input type="number" id="editPort" value="9875" min="1" max="65535">
+      </label>
+      <label>Group
+        <input type="text" id="editGroup" placeholder="Ungrouped">
+      </label>
+      <div class="edit-section-title">Alerts</div>
+      <p class="hint">Configure which app failures trigger an alert sound and card flash.</p>
+      <button class="btn btn-sm btn-alert" id="btnEditOpenAlerts">🔔 Configure Alerts</button>
+
+      <div class="edit-section-title">WSS Canvas</div>
+      <label class="checkbox-label">
+        <input type="checkbox" id="editCanvasEnabled">
+        <span>Enable Canvas Output / Preview links</span>
+      </label>
+      <label id="editCanvasPortRow">Canvas Port
+        <input type="number" id="editCanvasPort" value="9056" min="1" max="65535">
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="btnEditRemoveHost" style="margin-right:auto">Remove Host</button>
+      <button class="btn" id="btnEditHostSubmit">Save Changes</button>
+      <button class="btn btn-secondary" data-modal="modalEditHost">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Remove Host Confirm Modal -->
 <div class="modal-overlay" id="modalRemove" hidden>
   <div class="modal modal-sm">
@@ -131,7 +185,6 @@ $ws_url  = "ws://{$ws_host}:8765";
 </div>
 
 <script>
-  // Pass PHP-generated WS URL to JS
   window.XPMON_WS_URL = <?= json_encode($ws_url) ?>;
 </script>
 <script src="assets/app.js"></script>

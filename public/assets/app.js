@@ -35,6 +35,8 @@ let wsReconnectDelay = 2000;
 let pendingRemoveId = null;
 let xclFileContent = null;
 let alertsTargetHostId = null; // host being configured in alerts modal
+let editTargetHostId   = null; // host being edited
+let pendingCommand     = null; // { id, name, command }
 
 // ---------------------------------------------------------------------------
 // Audio
@@ -264,6 +266,16 @@ function handleMessage(msg) {
       closeModal('modalImport');
       break;
 
+    case 'host_updated':
+      hosts.set(msg.host.id, msg.host);
+      renderHost(msg.host);
+      toast('success', `Host updated: ${msg.host.display_name}`);
+      break;
+
+    case 'command_result':
+      handleCommandResult(msg);
+      break;
+
     case 'alerts_updated':
       // Bridge confirmed critical_apps saved — update local state
       if (hosts.has(msg.id)) {
@@ -365,29 +377,50 @@ function buildHostCard(host, expanded) {
     </div>
     <div class="card-body">
       ${buildDiskSection(host.disks)}
+      ${buildCanvasSection(host)}
       ${buildAppSection(host.apps, criticalApps)}
       <div class="card-footer">
-        <button class="btn btn-sm btn-alert" data-action="alerts" data-id="${host.id}" data-name="${esc(host.display_name)}">🔔 Alerts</button>
-        <button class="btn btn-sm btn-danger" data-action="remove" data-id="${host.id}" data-name="${esc(host.display_name)}">Remove</button>
+        <button class="btn btn-sm btn-secondary" data-action="edit">✎ Edit</button>
+        <button class="btn btn-sm btn-success btn-cmd" data-action="start">▶ Start All</button>
+        <button class="btn btn-sm btn-warning btn-cmd" data-action="stop">■ Stop All</button>
+        <button class="btn btn-sm btn-danger  btn-cmd" data-action="reboot">⟳ Reboot</button>
       </div>
     </div>
   `;
 
-  card.querySelector('.card-header').addEventListener('click', () => {
-    card.classList.toggle('expanded');
-  });
+  // Disable command buttons when host is offline
+  if (!host.connected) {
+    card.querySelectorAll('.btn-cmd').forEach(b => b.setAttribute('disabled', ''));
+  }
 
-  card.querySelector('[data-action="alerts"]').addEventListener('click', (e) => {
+  // Single delegated handler — covers all buttons and header expand
+  card.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) {
+      if (e.target.closest('.card-header')) card.classList.toggle('expanded');
+      return;
+    }
     e.stopPropagation();
-    openAlertsModal(host.id, host.display_name);
-  });
-
-  card.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
-    e.stopPropagation();
-    openRemoveModal(host.id, host.display_name);
+    const action = btn.dataset.action;
+    if      (action === 'edit')   openEditModal(host.id);
+    else if (['start','stop','reboot'].includes(action)) openCommandModal(host.id, host.display_name, action);
   });
 
   return card;
+}
+
+function buildCanvasSection(host) {
+  if (!host.canvas_enabled || !host.connected) return '';
+  const port = host.canvas_port || 9056;
+  const base = `https://${host.ip}:${port}`;
+  return `
+    <div class="canvas-section">
+      <div class="canvas-section-title">WSS Canvas</div>
+      <div class="canvas-links">
+        <a href="${base}/outputs"  target="_blank" rel="noopener" class="canvas-link">Outputs ↗</a>
+        <a href="${base}/previews" target="_blank" rel="noopener" class="canvas-link">Previews ↗</a>
+      </div>
+    </div>`;
 }
 
 function buildDiskSection(disks) {
@@ -559,6 +592,106 @@ document.getElementById('btnAlertsSave').addEventListener('click', () => {
 
 document.getElementById('btnAlertsTest').addEventListener('click', () => {
   playAlertSound();
+});
+
+// ---------------------------------------------------------------------------
+// Host command confirmation modal
+// ---------------------------------------------------------------------------
+
+const COMMAND_LABELS = {
+  start:  { label: 'Start All Processes', verb: 'start all processes on',  btnClass: 'btn-success' },
+  stop:   { label: 'Stop All Processes',  verb: 'stop all processes on',   btnClass: 'btn-warning' },
+  reboot: { label: 'Reboot Machine',      verb: 'reboot',                  btnClass: 'btn-danger'  },
+};
+
+function openCommandModal(hostId, hostName, command) {
+  pendingCommand = { id: hostId, name: hostName, command };
+  const meta = COMMAND_LABELS[command];
+  document.getElementById('cmdModalTitle').textContent = meta.label;
+  document.getElementById('cmdModalBody').innerHTML =
+    `Are you sure you want to <strong>${meta.verb}</strong> <strong>${esc(hostName)}</strong>?` +
+    (command === 'reboot' ? '<br><br><span style="color:var(--yellow)">⚠ This will immediately reboot the Windows machine.</span>' : '') +
+    (command === 'stop'   ? '<br><br><span style="color:var(--yellow)">⚠ This will kill all running XPression processes except Monitor and Monitor Launcher.</span>' : '');
+  const btn = document.getElementById('btnCmdConfirm');
+  btn.className = `btn ${meta.btnClass}`;
+  btn.textContent = meta.label;
+  openModal('modalCommand');
+}
+
+document.getElementById('btnCmdConfirm').addEventListener('click', () => {
+  if (!pendingCommand) return;
+  wsSend({ action: 'host_command', id: pendingCommand.id, command: pendingCommand.command });
+  const card = document.getElementById(`host-${pendingCommand.id}`);
+  if (card) {
+    card.querySelectorAll('.btn-cmd').forEach(b => { b.disabled = true; });
+    setTimeout(() => {
+      const c = document.getElementById(`host-${pendingCommand.id}`);
+      if (c) c.querySelectorAll('.btn-cmd').forEach(b => { b.disabled = false; });
+    }, 3000);
+  }
+  pendingCommand = null;
+  closeModal('modalCommand');
+});
+
+function handleCommandResult(msg) {
+  if (msg.ok) {
+    toast('success', `${COMMAND_LABELS[msg.command]?.label ?? msg.command} sent to ${hosts.get(msg.id)?.display_name ?? msg.id}`);
+  } else {
+    toast('error', `Command failed: ${msg.error || 'unknown error'}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Edit Host Modal
+// ---------------------------------------------------------------------------
+
+function openEditModal(hostId) {
+  editTargetHostId = hostId;
+  const host = hosts.get(hostId);
+  if (!host) return;
+  document.getElementById('editHostId').value          = hostId;
+  document.getElementById('editName').value            = host.display_name;
+  document.getElementById('editIp').value              = host.ip;
+  document.getElementById('editPort').value            = host.port || 9875;
+  document.getElementById('editGroup').value           = host.group || 'Ungrouped';
+  document.getElementById('editCanvasEnabled').checked = !!host.canvas_enabled;
+  document.getElementById('editCanvasPort').value      = host.canvas_port || 9056;
+  document.getElementById('editCanvasPortRow').style.display = host.canvas_enabled ? '' : 'none';
+  openModal('modalEditHost');
+}
+
+document.getElementById('btnEditOpenAlerts').addEventListener('click', () => {
+  if (!editTargetHostId) return;
+  const host = hosts.get(editTargetHostId);
+  closeModal('modalEditHost');
+  openAlertsModal(editTargetHostId, host ? host.display_name : editTargetHostId);
+});
+
+document.getElementById('btnEditRemoveHost').addEventListener('click', () => {
+  if (!editTargetHostId) return;
+  const host = hosts.get(editTargetHostId);
+  closeModal('modalEditHost');
+  openRemoveModal(editTargetHostId, host ? host.display_name : editTargetHostId);
+  editTargetHostId = null;
+});
+
+document.getElementById('editCanvasEnabled').addEventListener('change', function() {
+  document.getElementById('editCanvasPortRow').style.display = this.checked ? '' : 'none';
+});
+
+document.getElementById('btnEditHostSubmit').addEventListener('click', () => {
+  const id     = document.getElementById('editHostId').value;
+  const name   = document.getElementById('editName').value.trim();
+  const ip     = document.getElementById('editIp').value.trim();
+  const port   = parseInt(document.getElementById('editPort').value) || 9875;
+  const group  = document.getElementById('editGroup').value.trim() || 'Ungrouped';
+  const canvas = document.getElementById('editCanvasEnabled').checked;
+  const cport  = parseInt(document.getElementById('editCanvasPort').value) || 9056;
+  if (!name || !ip) { toast('error', 'Name and IP are required'); return; }
+  wsSend({ action: 'edit_host', id, display_name: name, ip, port, group,
+           canvas_enabled: canvas, canvas_port: cport });
+  closeModal('modalEditHost');
+  editTargetHostId = null;
 });
 
 // ---------------------------------------------------------------------------

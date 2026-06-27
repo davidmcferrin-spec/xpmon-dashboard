@@ -92,6 +92,8 @@ class HostState:
     disks: list = field(default_factory=list)
     last_seen: float = 0.0
     critical_apps: list = field(default_factory=list)  # list of app key GUIDs to alert on
+    canvas_enabled: bool = False   # WSS Canvas links enabled
+    canvas_port: int = 9056        # WSS Canvas HTTP port
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -386,6 +388,8 @@ class XPresMonBridge:
                     port         = h.get("port", 9875),
                     group        = h.get("group", "Ungrouped"),
                     critical_apps= h.get("critical_apps", []),
+                    canvas_enabled= h.get("canvas_enabled", False),
+                    canvas_port   = h.get("canvas_port", 9056),
                 )
                 self.hosts[state.id] = state
             log.info(f"Loaded {len(self.hosts)} hosts from config")
@@ -432,7 +436,9 @@ class XPresMonBridge:
                     "ip":           h.ip,
                     "port":         h.port,
                     "group":        h.group,
-                    "critical_apps": h.critical_apps,
+                    "critical_apps":  h.critical_apps,
+                    "canvas_enabled": h.canvas_enabled,
+                    "canvas_port":    h.canvas_port,
                 }
                 for h in self.hosts.values()
             ]
@@ -498,6 +504,29 @@ class XPresMonBridge:
                     "id":           hid,
                     "critical_apps": self.hosts[hid].critical_apps,
                 })
+
+        elif action == "edit_host":
+            hid = msg.get("id")
+            if hid in self.hosts:
+                h = self.hosts[hid]
+                h.display_name  = msg.get("display_name", h.display_name)
+                h.group         = msg.get("group", h.group)
+                h.canvas_enabled= bool(msg.get("canvas_enabled", h.canvas_enabled))
+                h.canvas_port   = int(msg.get("canvas_port", h.canvas_port) or 9056)
+                # IP/port changes require reconnect
+                new_ip   = msg.get("ip", h.ip)
+                new_port = int(msg.get("port", h.port) or 9875)
+                if new_ip != h.ip or new_port != h.port:
+                    h.ip   = new_ip
+                    h.port = new_port
+                    # Reconnect the client with the new address
+                    if hid in self.clients:
+                        self.clients[hid].stop()
+                        client = XPresMonClient(h, self)
+                        self.clients[hid] = client
+                        client.start()
+                await self._save_config()
+                await self.broadcast_host(h)
 
     async def _import_xcl(self, xml_str: str) -> int:
         """Parse XCL XML and add any hosts not already tracked by IP."""

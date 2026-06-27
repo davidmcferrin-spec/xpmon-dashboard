@@ -7,8 +7,11 @@
       "port": 9875,
       "group": "Indy DR Hub",
       "critical_apps": [
-        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
-      ]
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}",
+        "{DA7ACC7B-D569-409B-A865-5405D25FE8A9}"
+      ],
+      "canvas_enabled": true,
+      "canvas_port": 9056
     },
     {
       "id": "d10c69e5-c94e-43ff-8c2d-c25adc8b77ab",
@@ -17,8 +20,11 @@
       "port": 9875,
       "group": "Indy DR Hub",
       "critical_apps": [
-        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
-      ]
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}",
+        "{DA7ACC7B-D569-409B-A865-5405D25FE8A9}"
+      ],
+      "canvas_enabled": true,
+      "canvas_port": 9056
     },
     {
       "id": "e7014603-7575-44f9-bda0-7f18bbecb33e",
@@ -27,8 +33,11 @@
       "port": 9875,
       "group": "Chicago Hub",
       "critical_apps": [
-        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
-      ]
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}",
+        "{DA7ACC7B-D569-409B-A865-5405D25FE8A9}"
+      ],
+      "canvas_enabled": true,
+      "canvas_port": 9056
     },
     {
       "id": "5236ee4f-2aa0-4cd2-9562-bc0b06b978a7",
@@ -37,8 +46,11 @@
       "port": 9875,
       "group": "Chicago Hub",
       "critical_apps": [
-        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}"
-      ]
+        "{8A23C919-FCA8-4C39-BFB5-CD88C42FB4B7}",
+        "{DA7ACC7B-D569-409B-A865-5405D25FE8A9}"
+      ],
+      "canvas_enabled": true,
+      "canvas_port": 9056
     },
     {
       "id": "4ad97c43-95ab-4af1-a4c6-66c45e374309",
@@ -48,7 +60,9 @@
       "group": "Data-DataLinq Servers",
       "critical_apps": [
         "{E73545DD-A41F-45D6-82D8-C2C8BE99957D}"
-      ]
+      ],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     },
     {
       "id": "767d7355-cd74-4bcd-b234-315db6ffb3e2",
@@ -58,7 +72,9 @@
       "group": "Data-DataLinq Servers",
       "critical_apps": [
         "{E73545DD-A41F-45D6-82D8-C2C8BE99957D}"
-      ]
+      ],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     },
     {
       "id": "937c6e3e-02a9-4641-9be3-22e434d94235",
@@ -66,7 +82,9 @@
       "ip": "10.70.4.84",
       "port": 9875,
       "group": "Project Servers",
-      "critical_apps": []
+      "critical_apps": [],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     },
     {
       "id": "2cc7424b-64b9-4995-a689-c726b00448a6",
@@ -74,7 +92,9 @@
       "ip": "10.70.4.83",
       "port": 9875,
       "group": "Project Servers",
-      "critical_apps": []
+      "critical_apps": [],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     },
     {
       "id": "c19091a8-82a3-40f0-8237-0769bec8f903",
@@ -82,7 +102,9 @@
       "ip": "10.70.4.86",
       "port": 9875,
       "group": "Other",
-      "critical_apps": []
+      "critical_apps": [],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     },
     {
       "id": "fc7ec2ba-3ce7-40d9-88ef-34a2c59f0188",
@@ -90,7 +112,9 @@
       "ip": "10.254.148.201",
       "port": 9875,
       "group": "Data-DataLinq Servers",
-      "critical_apps": []
+      "critical_apps": [],
+      "canvas_enabled": false,
+      "canvas_port": 9056
     }
   ]
 }
