@@ -15,13 +15,15 @@ const PERMISSIONS = [
     'bridge_control',
     'manage_hosts',
     'view_host_commands',
-    'execute_host_commands',
+    'execute_service_commands',
+    'execute_reboot',
     'manage_users',
 ];
 
 const DEFAULT_ROLES = [
     'admin' => [
         'label' => 'Administrator',
+        'description' => 'Full access: dashboard, XCL export, bridge admin, host management, start/stop/reboot commands, and user administration.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => true,
@@ -29,12 +31,14 @@ const DEFAULT_ROLES = [
             'bridge_control' => true,
             'manage_hosts' => true,
             'view_host_commands' => true,
-            'execute_host_commands' => true,
+            'execute_service_commands' => true,
+            'execute_reboot' => true,
             'manage_users' => true,
         ],
     ],
     'operator' => [
         'label' => 'Operator',
+        'description' => 'Dashboard plus Start All, Stop All, and Reboot on hosts. Cannot edit hosts, manage the bridge, export XCL, or administer users.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,
@@ -42,12 +46,14 @@ const DEFAULT_ROLES = [
             'bridge_control' => false,
             'manage_hosts' => false,
             'view_host_commands' => true,
-            'execute_host_commands' => true,
+            'execute_service_commands' => true,
+            'execute_reboot' => true,
             'manage_users' => false,
         ],
     ],
     'viewer' => [
         'label' => 'Viewer',
+        'description' => 'Read-only dashboard access. No host commands, host editing, bridge admin, or user administration.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,
@@ -55,12 +61,14 @@ const DEFAULT_ROLES = [
             'bridge_control' => false,
             'manage_hosts' => false,
             'view_host_commands' => false,
-            'execute_host_commands' => false,
+            'execute_service_commands' => false,
+            'execute_reboot' => false,
             'manage_users' => false,
         ],
     ],
     'control_viewer' => [
         'label' => 'Control Viewer',
+        'description' => 'Dashboard plus visible host command buttons (Start/Stop/Reboot) in view-only mode — buttons are shown but disabled.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,
@@ -68,12 +76,14 @@ const DEFAULT_ROLES = [
             'bridge_control' => false,
             'manage_hosts' => false,
             'view_host_commands' => true,
-            'execute_host_commands' => false,
+            'execute_service_commands' => false,
+            'execute_reboot' => false,
             'manage_users' => false,
         ],
     ],
     'bridge_monitor' => [
         'label' => 'Bridge Monitor',
+        'description' => 'Dashboard and bridge log page. Can view bridge service logs but cannot start/stop the bridge or control hosts.',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,
@@ -81,12 +91,14 @@ const DEFAULT_ROLES = [
             'bridge_control' => false,
             'manage_hosts' => false,
             'view_host_commands' => false,
-            'execute_host_commands' => false,
+            'execute_service_commands' => false,
+            'execute_reboot' => false,
             'manage_users' => false,
         ],
     ],
     'kiosk' => [
         'label' => 'Kiosk (wall display)',
+        'description' => 'Wall-display dashboard only. Minimal UI, no host commands or admin. Session stays signed in indefinitely (no idle timeout).',
         'permissions' => [
             'dashboard' => true,
             'xcl_export' => false,
@@ -94,7 +106,8 @@ const DEFAULT_ROLES = [
             'bridge_control' => false,
             'manage_hosts' => false,
             'view_host_commands' => false,
-            'execute_host_commands' => false,
+            'execute_service_commands' => false,
+            'execute_reboot' => false,
             'manage_users' => false,
         ],
     ],
@@ -274,6 +287,11 @@ function effective_permissions(array $user): array
         if (in_array($perm, PERMISSIONS, true)) {
             $merged[$perm] = (bool)$val;
         }
+    }
+    // Legacy override: execute_host_commands granted both split permissions
+    if (!empty($overrides['execute_host_commands'])) {
+        $merged['execute_service_commands'] = true;
+        $merged['execute_reboot'] = true;
     }
     return $merged;
 }

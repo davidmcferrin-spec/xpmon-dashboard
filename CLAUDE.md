@@ -143,7 +143,7 @@ show_ignored_services, hide_door, hide_win_updates
 | `edit_host` | `{ id, display_name, ip, port, group, hostname, canvas_enabled, canvas_port }` |
 | `import_xcl` | `{ xml: string }` |
 | `set_critical_apps` | `{ id, critical_apps: string[] }` |
-| `host_command` | `{ id, command: "start"\|"stop"\|"reboot" }` |
+| `host_command` | `{ id, command: "start"\|"stop"\|"reboot" }` — requires `execute_service_commands` (start/stop) or `execute_reboot` (reboot) in UI |
 | `update_group` | `{ id, group }` |
 
 ## Performance and robustness

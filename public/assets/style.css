@@ -19,6 +19,7 @@
   --red:           #ef4444;
   --red-dim:       #b91c1c;
   --yellow:        #f59e0b;
+  --orange:        #f97316;
   --gray:          #6b7280;
   --gray-light:    #9ca3af;
 
@@ -49,6 +50,7 @@
   --red:           #dc2626;
   --red-dim:       #b91c1c;
   --yellow:        #d97706;
+  --orange:        #ea580c;
   --gray:          #9ca3af;
   --gray-light:    #6b7280;
 
@@ -135,6 +137,42 @@ html, body {
 .ws-status.disconnected .ws-dot { background: var(--red); }
 .ws-status.connected    .ws-label { color: var(--green); }
 .ws-status.disconnected .ws-label { color: var(--red); }
+
+/* ---- Topbar search ---- */
+.topbar-search {
+  flex: 1;
+  max-width: 280px;
+  margin: 0 8px;
+}
+
+.search-input {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 5px 10px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.search-input::placeholder { color: var(--text-muted); }
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,180,216,0.15);
+}
+/* Hide the native clear button — we handle Escape key */
+.search-input::-webkit-search-cancel-button { display: none; }
+
+/* ---- No results message ---- */
+.no-results {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.no-results strong { color: var(--text-secondary); }
 
 /* ---- Buttons ---- */
 .btn {
@@ -246,6 +284,7 @@ html, body {
 .host-card.offline .card-header { border-left-color: var(--red); }
 .host-card.connected .card-header { border-left-color: var(--green); }
 .host-card.checking .card-header { border-left-color: var(--yellow, #eab308); }
+.host-card.degraded .card-header { border-left-color: var(--orange, #f97316); }
 
 .card-header {
   display: flex;
@@ -266,6 +305,7 @@ html, body {
   transition: background 0.3s;
 }
 .connected  .status-dot { background: var(--green); box-shadow: 0 0 6px var(--green-dim); }
+.degraded   .status-dot { background: var(--orange, #f97316); box-shadow: 0 0 6px rgba(249,115,22,0.45); }
 .offline    .status-dot { background: var(--red); }
 
 .card-title {
@@ -311,6 +351,7 @@ html, body {
 }
 .badge-connected  { background: rgba(34,197,94,0.15);  color: var(--green); }
 .badge-checking   { background: rgba(234,179,8,0.15);  color: var(--yellow, #eab308); }
+.badge-degraded   { background: rgba(249,115,22,0.15); color: var(--orange, #f97316); }
 .badge-offline    { background: rgba(239,68,68,0.15);  color: var(--red); }
 .badge-update     { background: rgba(245,158,11,0.15); color: var(--yellow); }
 
@@ -927,6 +968,10 @@ html, body {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.role-option {
+  cursor: help;
 }
 
 .hint-inline {

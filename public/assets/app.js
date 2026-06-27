@@ -41,6 +41,7 @@ let xclFileContent = null;
 let alertsTargetHostId = null; // host being configured in alerts modal
 let editTargetHostId   = null; // host being edited
 let pendingCommand     = null; // { id, name, command }
+let searchTerm         = '';
 
 // ---------------------------------------------------------------------------
 // Auth / permissions (from PHP session via window.XPMON_USER)
@@ -68,8 +69,13 @@ const WS_GUARDED_ACTIONS = {
   import_xcl: 'manage_hosts',
   update_group: 'manage_hosts',
   set_critical_apps: 'manage_hosts',
-  host_command: 'execute_host_commands',
 };
+
+function canExecuteCommand(command) {
+  if (command === 'reboot') return can('execute_reboot');
+  if (command === 'start' || command === 'stop') return can('execute_service_commands');
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Audio
@@ -331,10 +337,17 @@ function scheduleReconnect() {
 
 function wsSend(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const required = WS_GUARDED_ACTIONS[obj.action];
-    if (required && !can(required)) {
-      toast('error', 'You do not have permission for that action');
-      return;
+    if (obj.action === 'host_command') {
+      if (!canExecuteCommand(obj.command)) {
+        toast('error', 'You do not have permission for that command');
+        return;
+      }
+    } else {
+      const required = WS_GUARDED_ACTIONS[obj.action];
+      if (required && !can(required)) {
+        toast('error', 'You do not have permission for that action');
+        return;
+      }
     }
     ws.send(JSON.stringify(obj));
   }
@@ -483,6 +496,7 @@ function renderAll() {
   });
 
   cleanEmptyGroups();
+  applySearch();
 }
 
 function renderHost(host) {
@@ -508,12 +522,42 @@ function renderHost(host) {
   }
 
   updateGroupCount(host.group || 'Ungrouped');
+  applySearch();
+}
+
+function countStoppedApps(host) {
+  if (!host.connected || !host.apps) return 0;
+  return host.apps.filter(app =>
+    !app.ignore_status && app.status !== 2 && !isInUpgradeGrace(host, app)
+  ).length;
+}
+
+function hostCardStateClass(host) {
+  if (!host.connected) return 'offline';
+  if (host.checking) return 'checking';
+  if (countStoppedApps(host) > 0) return 'degraded';
+  return 'connected';
+}
+
+function hostStatusBadge(host, stoppedCount) {
+  if (host.checking) {
+    return '<span class="badge badge-checking">CHECKING</span>';
+  }
+  if (!host.connected) {
+    return '<span class="badge badge-offline">OFFLINE</span>';
+  }
+  if (stoppedCount > 0) {
+    const label = stoppedCount === 1 ? '1 DOWN' : `${stoppedCount} DOWN`;
+    return `<span class="badge badge-degraded" title="${stoppedCount} application(s) not running">${label}</span>`;
+  }
+  return '<span class="badge badge-connected">ONLINE</span>';
 }
 
 function buildHostCard(host, expanded) {
   const card = document.createElement('div');
   card.id = `host-${host.id}`;
-  card.className = `host-card ${host.connected ? (host.checking ? 'checking' : 'connected') : 'offline'} ${expanded ? 'expanded' : ''}`;
+  const stoppedCount = countStoppedApps(host);
+  card.className = `host-card ${hostCardStateClass(host)} ${expanded ? 'expanded' : ''}`;
 
   const r = (host.door_color & 0xFF);
   const g = (host.door_color >> 8) & 0xFF;
@@ -534,11 +578,13 @@ function buildHostCard(host, expanded) {
     footerButtons.push('<button class="btn btn-sm btn-secondary" data-action="edit">✎ Edit</button>');
   }
   if (can('view_host_commands')) {
-    const exec = can('execute_host_commands');
-    const dis = exec ? '' : ' disabled title="View only — no execute permission"';
-    footerButtons.push(`<button class="btn btn-sm btn-success btn-cmd" data-action="start"${dis}>▶ Start All</button>`);
-    footerButtons.push(`<button class="btn btn-sm btn-warning btn-cmd" data-action="stop"${dis}>■ Stop All</button>`);
-    footerButtons.push(`<button class="btn btn-sm btn-danger  btn-cmd" data-action="reboot"${dis}>⟳ Reboot</button>`);
+    const svcDis = can('execute_service_commands')
+      ? '' : ' disabled title="No permission to start/stop services"';
+    const rebootDis = can('execute_reboot')
+      ? '' : ' disabled title="No permission to reboot"';
+    footerButtons.push(`<button class="btn btn-sm btn-success btn-cmd" data-action="start"${svcDis}>▶ Start All</button>`);
+    footerButtons.push(`<button class="btn btn-sm btn-warning btn-cmd" data-action="stop"${svcDis}>■ Stop All</button>`);
+    footerButtons.push(`<button class="btn btn-sm btn-danger  btn-cmd" data-action="reboot"${rebootDis}>⟳ Reboot</button>`);
   }
   const footerHtml = footerButtons.length
     ? `<div class="card-footer">${footerButtons.join('')}</div>`
@@ -554,9 +600,7 @@ function buildHostCard(host, expanded) {
       <div class="card-badges">
         ${showDoor ? `<span class="door-swatch" style="background:${doorRgb}" title="Door color"></span>` : ''}
         ${showUpd ? `<span class="badge badge-update" title="${host.win_updates} update(s) pending${host.win_pending_restart ? ' · Restart required' : ''}">UPD</span>` : ''}
-        ${host.checking
-          ? '<span class="badge badge-checking">CHECKING</span>'
-          : `<span class="badge ${host.connected ? 'badge-connected' : 'badge-offline'}">${host.connected ? 'ONLINE' : 'OFFLINE'}</span>`}
+        ${hostStatusBadge(host, stoppedCount)}
       </div>
       <span class="card-expand-icon">▼</span>
     </div>
@@ -585,8 +629,10 @@ function buildHostCard(host, expanded) {
     const action = btn.dataset.action;
     if      (action === 'edit')   openEditModal(host.id);
     else if (['start','stop','reboot'].includes(action)) {
-      if (!can('execute_host_commands')) {
-        toast('error', 'You do not have permission to run host commands');
+      if (!canExecuteCommand(action)) {
+        toast('error', action === 'reboot'
+          ? 'You do not have permission to reboot hosts'
+          : 'You do not have permission to start/stop services');
         return;
       }
       openCommandModal(host.id, host.display_name, action);
@@ -692,8 +738,27 @@ function createGroupSection(groupName) {
   `;
   section.querySelector('.group-header').addEventListener('click', () => {
     section.classList.toggle('collapsed');
+    saveCollapseState();
   });
+
+  // Restore saved collapsed state for this group
+  if (loadCollapseState()[cssId(groupName)]) {
+    section.classList.add('collapsed');
+  }
+
   return section;
+}
+
+function saveCollapseState() {
+  const state = {};
+  document.querySelectorAll('.group-section').forEach(s => {
+    state[s.id.replace('group-', '')] = s.classList.contains('collapsed');
+  });
+  try { localStorage.setItem('xpmon-groups', JSON.stringify(state)); } catch(e) {}
+}
+
+function loadCollapseState() {
+  try { return JSON.parse(localStorage.getItem('xpmon-groups') || '{}'); } catch(e) { return {}; }
 }
 
 function updateGroupCount(groupName) {
@@ -1057,6 +1122,69 @@ function formatBytes(bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// Search / filter
+// ---------------------------------------------------------------------------
+
+function applySearch() {
+  const term = searchTerm.trim().toLowerCase();
+  let anyVisible = false;
+
+  document.querySelectorAll('.group-section').forEach(section => {
+    let groupHasMatch = false;
+    section.querySelectorAll('.host-card').forEach(card => {
+      const id = card.id.replace('host-', '');
+      const host = hosts.get(id);
+      if (!host) return;
+
+      const matches = !term
+        || host.display_name.toLowerCase().includes(term)
+        || host.ip.toLowerCase().includes(term)
+        || (host.hostname || '').toLowerCase().includes(term)
+        || (host.reported_hostname || '').toLowerCase().includes(term)
+        || (host.group || '').toLowerCase().includes(term);
+
+      card.style.display = matches ? '' : 'none';
+      if (matches) { groupHasMatch = true; anyVisible = true; }
+    });
+
+    // Hide entire group section if nothing in it matches
+    section.style.display = groupHasMatch ? '' : 'none';
+  });
+
+  // Show empty state if search returns nothing
+  const dashboard = document.getElementById('dashboard');
+  let noResults = dashboard.querySelector('.no-results');
+  if (!anyVisible && term && hosts.size > 0) {
+    if (!noResults) {
+      noResults = document.createElement('div');
+      noResults.className = 'no-results';
+      noResults.innerHTML = `No hosts match <strong>${esc(term)}</strong>`;
+      dashboard.appendChild(noResults);
+    }
+  } else if (noResults) {
+    noResults.remove();
+  }
+}
+
+function initSearch() {
+  const input = document.getElementById('searchInput');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    searchTerm = input.value;
+    applySearch();
+  });
+  // Clear on Escape
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      input.value = '';
+      searchTerm = '';
+      applySearch();
+      input.blur();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
 
@@ -1231,4 +1359,5 @@ if (document.getElementById('modalForcePassword')) {
 // Boot
 // ---------------------------------------------------------------------------
 
+initSearch();
 wsConnect();

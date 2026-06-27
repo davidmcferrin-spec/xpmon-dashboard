@@ -82,7 +82,7 @@ $user = session_user_payload_full();
     <p class="hint">Users in these AD groups can sign in without a pre-created account. Match by group CN or full DN.</p>
     <div class="admin-inline-form">
       <input type="text" id="newGroupName" placeholder="Group name (e.g. XPMon-Operators)">
-      <select id="newGroupRoles" multiple size="3"></select>
+      <select id="newGroupRoles" multiple size="3" title="Hover each role in the list for a description"></select>
       <button class="btn btn-sm" id="btnAddGroup">Add Group</button>
     </div>
     <ul class="admin-list" id="ldapGroupsList"></ul>
@@ -166,6 +166,7 @@ $user = session_user_payload_full();
         <span>Account enabled</span>
       </label>
       <div class="edit-section-title">Roles</div>
+      <p class="hint">Hover a role name for a summary of what it allows.</p>
       <div id="userRolesCheckboxes" class="checkbox-grid"></div>
     </div>
     <div class="modal-footer">
@@ -189,7 +190,8 @@ const PERM_LABELS = {
   bridge_control: 'Bridge — Start/Stop/Restart',
   manage_hosts: 'Manage Hosts',
   view_host_commands: 'View Host Commands',
-  execute_host_commands: 'Execute Host Commands',
+  execute_service_commands: 'Execute Start/Stop Services',
+  execute_reboot: 'Execute Reboot',
   manage_users: 'Manage Users',
 };
 
@@ -275,8 +277,16 @@ function renderGlobal() {
 function populateRoleSelects() {
   const sel = document.getElementById('newGroupRoles');
   sel.innerHTML = Object.entries(adminData.roles).map(([id, r]) =>
-    `<option value="${esc(id)}" selected>${esc(r.label)}</option>`
+    `<option value="${esc(id)}" title="${esc(r.description || '')}" selected>${esc(r.label)}</option>`
   ).join('');
+}
+
+function roleCheckboxHtml(id, role, checked) {
+  const tip = esc(role.description || role.label || '');
+  return `<label class="checkbox-label role-option" title="${tip}">
+    <input type="checkbox" name="userRole" value="${esc(id)}" ${checked ? 'checked' : ''}>
+    <span>${esc(role.label)}</span>
+  </label>`;
 }
 
 function openUserModal(userId) {
@@ -295,12 +305,9 @@ function openUserModal(userId) {
   togglePasswordRow();
 
   const rolesBox = document.getElementById('userRolesCheckboxes');
-  rolesBox.innerHTML = Object.entries(adminData.roles).map(([id, r]) => `
-    <label class="checkbox-label">
-      <input type="checkbox" name="userRole" value="${esc(id)}" ${(user.roles || []).includes(id) ? 'checked' : ''}>
-      <span>${esc(r.label)}</span>
-    </label>
-  `).join('');
+  rolesBox.innerHTML = Object.entries(adminData.roles).map(([id, r]) =>
+    roleCheckboxHtml(id, r, (user.roles || []).includes(id))
+  ).join('');
 
   document.getElementById('modalUser').removeAttribute('hidden');
 }

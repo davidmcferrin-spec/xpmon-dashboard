@@ -194,13 +194,18 @@ def make_login_packet() -> str:
         f'</packet>'
     )
 
+# Maximum bytes fed to the XML parser. Payloads beyond this are truncated
+# before parsing — the valid packet element always closes well under this limit.
+_XML_PARSE_CAP = 65_536
+
 def parse_xml_packet(data: bytes) -> Optional[ET.Element]:
     """Find and parse the XML portion of a frame payload."""
     idx = data.find(b'<packet')
     if idx < 0:
         return None
     try:
-        return ET.fromstring(data[idx:].decode("utf-8", errors="replace"))
+        # Cap the slice to avoid large allocations on anomalous payloads
+        return ET.fromstring(data[idx:idx + _XML_PARSE_CAP].decode("utf-8", errors="replace"))
     except ET.ParseError:
         return None
 
@@ -474,8 +479,17 @@ class XPresMonClient:
 
         _total_len, payload_len, _ = FRAME_HEADER.unpack(header_bytes)
 
+        # Hard ceiling: anything over 1MB is never legitimate for this protocol
         if payload_len > 1_048_576 or payload_len == 0:
             raise ConnectionError(f"Implausible payload length: {payload_len}")
+        # Soft cap: XPression payloads are always <4KB in practice.
+        # Log a warning for anything over 64KB so anomalies are visible,
+        # but still parse it — could be a large inventory on a busy host.
+        if payload_len > 65_536:
+            log.warning(
+                "[%s] Unusually large payload: %d bytes — parsing anyway",
+                self.state.display_name, payload_len
+            )
 
         payload = await asyncio.wait_for(
             self._reader.readexactly(payload_len), timeout=10
@@ -758,8 +772,15 @@ class XPresMonBridge:
             return True
 
     async def _save_config(self):
+        """
+        Persist config to disk without blocking the event loop.
+        asyncio.to_thread() runs _write_config() in a thread-pool thread so
+        the JSON serialisation, tmp file write, and os.replace() don't stall
+        host TCP connections or WebSocket broadcasts while they execute.
+        The _config_lock ensures only one write runs at a time.
+        """
         async with self._config_lock:
-            self._write_config()
+            await asyncio.to_thread(self._write_config)
 
     def _write_config(self):
         data = {
